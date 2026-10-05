@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# WhatsApp Sessions
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Uploads
+uploads/*
+!uploads/.gitkeep
+
+# Sensitive spreadsheets and dumps
+*.xlsx
+*.xls
+*.csv
+hostinger_accounts_to_create.*

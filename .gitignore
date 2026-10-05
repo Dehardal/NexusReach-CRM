@@ -1,0 +1,68 @@
+# Dependencies
+node_modules/
+*/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment files and Secrets (CRITICAL)
+.env
+.env.local
+.env.*.local
+*.env
+backend/.env
+backend/.env.production
+backend/.env.staging
+
+# Build and Production Artifacts
+dist/
+build/
+frontend/dist/
+*.tsbuildinfo
+
+# Binaries and Large Executables
+*.exe
+cloudflared.exe
+*.dll
+*.so
+*.dylib
+
+# Uploads & User Generated Files
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# WhatsApp Web Session & Auth Tokens
+.wwebjs_auth/
+.wwebjs_cache/
+backend/.wwebjs_auth/
+backend/.wwebjs_cache/
+
+# Chrome Automation & Debug Profiles
+.chrome-automation/
+**/.chrome-automation/
+
+# Local Automation & Sensitive Credential Scripts
+1000_*
+*.xlsx
+*.xls
+*.csv
+hostinger_accounts_to_create.*
+hostinger_f12_auto_creator.js
+
+# Internal Scratch and Test Dumps
+scratch/
+brain/
+.system_generated/
+
+# OS & Editor Files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

@@ -1,0 +1,17 @@
+{
+  "watch": [
+    "server.js",
+    "config",
+    "middleware",
+    "models",
+    "routes",
+    "services"
+  ],
+  "ignore": [
+    ".wwebjs_auth/**",
+    ".wwebjs_cache/**",
+    "uploads/**",
+    "node_modules/**"
+  ],
+  "ext": "js,json"
+}
