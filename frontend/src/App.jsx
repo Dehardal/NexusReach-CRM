@@ -163,7 +163,7 @@ const Layout = ({ children }) => {
                             <li className={`nav-item ${isActive('/mailboxes') ? 'active' : ''}`}>
                                 <Link to="/mailboxes">
                                     <Server size={20} />
-                                    <span>Hostinger Mailboxes</span>
+                                    <span>Mailboxes</span>
                                 </Link>
                             </li>
                         </>

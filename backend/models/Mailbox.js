@@ -38,8 +38,13 @@ const mailboxSchema = new mongoose.Schema({
     },
     provider: {
         type: String,
-        enum: ['hostinger', 'gmail', 'custom', 'brevo', 'resend', 'outlook'],
+        enum: ['hostinger', 'gmail', 'cloudflare', 'custom', 'brevo', 'resend', 'outlook'],
         default: 'hostinger'
+    },
+    smtpUser: {
+        type: String,
+        default: '',
+        trim: true
     },
     smtpHost: {
         type: String,

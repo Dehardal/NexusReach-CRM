@@ -30,9 +30,11 @@ const EmailInbox = () => {
     const [onlyUnread, setOnlyUnread] = useState(false);
     const [syncingHostinger, setSyncingHostinger] = useState(false);
 
-    // Multi-User Isolation & Admin Switching
+    // Multi-User Isolation & Mailbox/Alias Filtering
     const [filterUser, setFilterUser] = useState('all');
     const [teamMembers, setTeamMembers] = useState([]);
+    const [filterMailbox, setFilterMailbox] = useState('all');
+    const [mailboxList, setMailboxList] = useState([]);
     const [myMailboxAddress, setMyMailboxAddress] = useState('');
     const [availableSenders, setAvailableSenders] = useState([]);
     const [selectedSender, setSelectedSender] = useState('');
@@ -59,11 +61,12 @@ const EmailInbox = () => {
                     setSelectedSender(prev => prev || data.emailUser);
                 }
 
-                // Load all connected mailboxes to populate the Sender dropdown
+                // Load all connected mailboxes to populate the Sender dropdown & alias filter
                 try {
                     const mbRes = await api.get('/mailboxes');
                     if (Array.isArray(mbRes.data)) {
-                        const addresses = mbRes.data.map(m => m.email).filter(Boolean);
+                        setMailboxList(mbRes.data);
+                        const addresses = mbRes.data.map(m => m.emailUser || m.email).filter(Boolean);
                         setAvailableSenders(addresses);
                     }
                 } catch (e) {}
@@ -87,6 +90,9 @@ const EmailInbox = () => {
             if (searchQuery) params.append('search', searchQuery);
             if (isAdmin && filterUser && filterUser !== 'all') {
                 params.append('filterUser', filterUser);
+            }
+            if (filterMailbox && filterMailbox !== 'all') {
+                params.append('filterMailbox', filterMailbox);
             }
             const queryStr = params.toString() ? `?${params.toString()}` : '';
 
@@ -119,7 +125,7 @@ const EmailInbox = () => {
 
     useEffect(() => {
         fetchEmails();
-    }, [activeTab, searchQuery, filterUser]);
+    }, [activeTab, searchQuery, filterUser, filterMailbox]);
 
     // Real-time socket listener for incoming emails
     useEffect(() => {
@@ -374,8 +380,10 @@ const EmailInbox = () => {
                 ? selectedEmail.subject 
                 : `Re: ${selectedEmail.subject}`;
 
+            const replyFrom = selectedEmail.to || selectedSender || myMailboxAddress;
             const { data } = await api.post('/email/send', {
                 to: selectedEmail.from,
+                fromEmail: replyFrom,
                 subject: replySubject,
                 text: replyText,
                 html: `<div style="font-family: sans-serif; line-height: 1.6; color: #1f2937;">${replyText.replace(/\n/g, '<br/>')}</div>`,
@@ -504,11 +512,34 @@ const EmailInbox = () => {
                     
                     {/* Folder Tabs & Search */}
                     <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color)' }}>
-                        {/* Admin Mailbox Filter Dropdown */}
-                        {isAdmin && (
+                        {/* Mailbox / Identity Filter Dropdown */}
+                        <div style={{ marginBottom: '12px' }}>
+                            <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
+                                Mailbox / Alias Filter
+                            </label>
+                            <CustomDropdown
+                                value={filterMailbox}
+                                onChange={(val) => {
+                                    setFilterMailbox(val || 'all');
+                                    setSelectedEmail(null);
+                                }}
+                                options={[
+                                    { value: 'all', label: `All Inboxes & Aliases (${availableSenders.length || 1})`, icon: '🌐' },
+                                    ...mailboxList.map((mb) => ({
+                                        value: mb.emailUser,
+                                        label: `${mb.emailUser} [${mb.provider === 'cloudflare' ? 'Cloudflare Alias' : mb.provider}]`,
+                                        icon: mb.provider === 'cloudflare' ? '⚡' : '✉️'
+                                    }))
+                                ]}
+                                width="100%"
+                            />
+                        </div>
+
+                        {/* Admin Team Filter Dropdown */}
+                        {isAdmin && teamMembers.length > 0 && (
                             <div style={{ marginBottom: '12px' }}>
                                 <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
-                                    Viewing Mailbox
+                                    Team Member Filter
                                 </label>
                                 <CustomDropdown
                                     value={filterUser}
@@ -517,7 +548,7 @@ const EmailInbox = () => {
                                         setSelectedEmail(null);
                                     }}
                                     options={[
-                                        { value: 'all', label: 'All Team Mailboxes', icon: '🌐' },
+                                        { value: 'all', label: 'All Team Members', icon: '👥' },
                                         ...teamMembers.map((m) => ({
                                             value: m.userId,
                                             label: `${m.name} (${m.domainEmail !== 'Not Configured' ? m.domainEmail : 'No Domain'})`,
@@ -1156,27 +1187,22 @@ const EmailInbox = () => {
                             {/* Sender Selector */}
                             <div>
                                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                                    Send From (Sender Address)
+                                    Send From (Select Identity / Alias)
                                 </label>
-                                <div>
-                                    <input
-                                        type="email"
-                                        list="sender-options-list"
-                                        value={selectedSender || myMailboxAddress}
-                                        onChange={(e) => setSelectedSender(e.target.value)}
-                                        placeholder="e.g. liam.anderson@untressed.com"
-                                        className="form-input"
-                                        style={{ width: '100%', fontFamily: 'monospace', fontSize: '13px' }}
-                                    />
-                                    <datalist id="sender-options-list">
-                                        {myMailboxAddress && <option value={myMailboxAddress}>{myMailboxAddress} (Default Outbound)</option>}
-                                        {availableSenders.map(s => (
-                                            <option key={s} value={s}>{s}</option>
-                                        ))}
-                                    </datalist>
-                                </div>
+                                <CustomDropdown
+                                    value={selectedSender || myMailboxAddress}
+                                    onChange={(val) => setSelectedSender(val)}
+                                    options={[
+                                        ...(myMailboxAddress ? [{ value: myMailboxAddress, label: `${myMailboxAddress} (Primary Master Outbound)` }] : []),
+                                        ...mailboxList.map(m => ({
+                                            value: m.emailUser,
+                                            label: `${m.senderName ? `${m.senderName} <${m.emailUser}>` : m.emailUser} [${m.provider === 'cloudflare' ? 'Cloudflare Alias' : m.provider}]`
+                                        }))
+                                    ]}
+                                    width="100%"
+                                />
                                 <span style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '4px', display: 'block' }}>
-                                    💡 Select from connected mailboxes or enter any custom alias on your domain (e.g. <code>name@untressed.com</code>).
+                                    💡 Emails are dispatched via authenticated SMTP with your selected domain identity in the From header.
                                 </span>
                             </div>
 

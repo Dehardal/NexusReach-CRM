@@ -135,8 +135,26 @@ router.post('/', protect, async (req, res) => {
             { upsert: true, new: true }
         );
 
+        // Also ensure primary mailbox is present in Mailbox collection
+        const Mailbox = require('../models/Mailbox');
+        await Mailbox.findOneAndUpdate(
+            { userId: req.user._id, emailUser: cleanEmailUser },
+            {
+                userId: req.user._id,
+                senderName: senderName || req.user.name,
+                emailUser: cleanEmailUser,
+                emailPass: encryptedPass,
+                provider: provider || 'custom',
+                smtpHost: smtpHost || (provider === 'gmail' ? 'smtp.gmail.com' : 'smtp.resend.com'),
+                smtpPort: Number(smtpPort) || (provider === 'gmail' ? 587 : 465),
+                smtpSecure: Number(smtpPort) === 465,
+                status: 'active'
+            },
+            { upsert: true, new: true }
+        );
+
         res.json({
-            message: 'Email credentials securely encrypted and verified!',
+            message: 'Email credentials securely encrypted, verified, and synced to Mailbox Hub!',
             settings: {
                 senderName: updatedSettings.senderName,
                 emailUser: updatedSettings.emailUser,
@@ -220,6 +238,98 @@ router.get('/team', protect, async (req, res) => {
         res.json(teamStatus);
     } catch (error) {
         res.status(500).json({ message: error.message });
+    }
+});
+
+// @desc    Bulk sync Cloudflare/domain aliases to Mailbox Hub
+// @route   POST /api/email-settings/sync-aliases
+// @access  Private
+router.post('/sync-aliases', protect, async (req, res) => {
+    try {
+        const { aliasesText } = req.body;
+        if (!aliasesText || typeof aliasesText !== 'string') {
+            return res.status(400).json({ message: 'Aliases text or CSV content is required' });
+        }
+
+        // Get user's active email credentials
+        const settings = await EmailSettings.findOne({ userId: req.user._id });
+        if (!settings || !settings.emailPass) {
+            return res.status(400).json({ 
+                message: 'Please configure and verify your Master Outbound credentials first before syncing aliases.' 
+            });
+        }
+
+        const lines = aliasesText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        const Mailbox = require('../models/Mailbox');
+
+        let createdCount = 0;
+        let updatedCount = 0;
+
+        for (const line of lines) {
+            // Support: "email" OR "name,email" OR "email,name"
+            const parts = line.split(/[,\t]+/).map(p => p.trim().replace(/^["']|["']$/g, ''));
+            let email = '';
+            let name = '';
+
+            if (parts.length >= 2) {
+                if (parts[0].includes('@')) {
+                    email = parts[0];
+                    name = parts[1];
+                } else if (parts[1].includes('@')) {
+                    name = parts[0];
+                    email = parts[1];
+                }
+            } else if (parts[0].includes('@')) {
+                email = parts[0];
+                name = email.split('@')[0].replace(/[._-]/g, ' ');
+                name = name.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+            }
+
+            if (!email || !email.includes('@')) continue;
+
+            email = email.toLowerCase().trim();
+
+            const existing = await Mailbox.findOne({ userId: req.user._id, emailUser: email });
+            const aliasProvider = (settings.provider === 'gmail' && !email.endsWith('@gmail.com')) ? 'cloudflare' : (settings.provider || 'gmail');
+            const authSmtpUser = settings.smtpUser || settings.emailUser;
+
+            if (existing) {
+                existing.senderName = name || existing.senderName;
+                existing.emailPass = settings.emailPass;
+                existing.smtpUser = authSmtpUser;
+                existing.provider = aliasProvider;
+                existing.smtpHost = settings.smtpHost || (settings.provider === 'gmail' ? 'smtp.gmail.com' : 'smtp.resend.com');
+                existing.smtpPort = settings.smtpPort || (settings.provider === 'gmail' ? 587 : 465);
+                existing.smtpSecure = Number(settings.smtpPort) === 465;
+                existing.status = 'active';
+                await existing.save();
+                updatedCount++;
+            } else {
+                await Mailbox.create({
+                    userId: req.user._id,
+                    senderName: name || email.split('@')[0],
+                    emailUser: email,
+                    smtpUser: authSmtpUser,
+                    emailPass: settings.emailPass,
+                    provider: aliasProvider,
+                    smtpHost: settings.smtpHost || (settings.provider === 'gmail' ? 'smtp.gmail.com' : 'smtp.resend.com'),
+                    smtpPort: settings.smtpPort || (settings.provider === 'gmail' ? 587 : 465),
+                    smtpSecure: Number(settings.smtpPort) === 465,
+                    dailyLimit: 100,
+                    status: 'active'
+                });
+                createdCount++;
+            }
+        }
+
+        res.json({
+            success: true,
+            message: `Successfully registered ${createdCount + updatedCount} domain aliases into Mailbox Hub! (${createdCount} created, ${updatedCount} updated).`,
+            stats: { created: createdCount, updated: updatedCount, total: createdCount + updatedCount }
+        });
+    } catch (err) {
+        console.error('[SYNC ALIASES ERROR]', err);
+        res.status(500).json({ message: err.message });
     }
 });
 

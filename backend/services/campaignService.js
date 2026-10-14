@@ -69,20 +69,32 @@ const sendCampaignBatch = async ({ campaignId, userId, leadIds, subject, bodyHtm
         const transporters = new Map();
         for (const mb of mailboxes) {
             const pass = decrypt(mb.emailPass);
-            const transporter = nodemailer.createTransport({
+            const authUser = mb.smtpUser || mb.emailUser;
+            const isGmailOrCloudflare = mb.provider === 'gmail' || mb.provider === 'cloudflare' || (mb.smtpHost && mb.smtpHost.includes('gmail.com'));
+            
+            const transportConfig = isGmailOrCloudflare ? {
+                service: 'gmail',
+                auth: {
+                    user: authUser,
+                    pass
+                },
+                connectionTimeout: 10000
+            } : {
                 host: mb.smtpHost || 'smtp.hostinger.com',
                 port: Number(mb.smtpPort) || 465,
                 secure: Number(mb.smtpPort) === 465 || mb.smtpSecure,
                 auth: {
-                    user: mb.emailUser,
+                    user: authUser,
                     pass
                 },
                 connectionTimeout: 10000
-            });
+            };
+
+            const transporter = nodemailer.createTransport(transportConfig);
             transporters.set(mb._id.toString(), transporter);
         }
 
-        console.log(`[CAMPAIGN START] Launching campaign "${campaign.name}" for ${leads.length} leads across ${mailboxes.length} Hostinger mailboxes`);
+        console.log(`[CAMPAIGN START] Launching campaign "${campaign.name}" for ${leads.length} leads across ${mailboxes.length} active mailboxes/aliases`);
 
         // Iterate through leads with round-robin rotation
         for (let i = 0; i < leads.length; i++) {

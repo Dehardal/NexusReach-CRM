@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Mail, Plus, CheckCircle2, AlertCircle, RefreshCw, Trash2, Power, ShieldCheck, Zap, Server, FileSpreadsheet, Download, UploadCloud, FileText, X, Key, Cpu, Check, Users, UserCheck, Inbox, CheckSquare, Square, Filter, PauseCircle, PlayCircle, Scale, Sliders, Eye, EyeOff } from 'lucide-react';
+import { Mail, Plus, CheckCircle2, AlertCircle, RefreshCw, Trash2, Power, ShieldCheck, Zap, Server, FileSpreadsheet, Download, UploadCloud, FileText, X, Key, Cpu, Check, Users, UserCheck, Inbox, CheckSquare, Square, Filter, PauseCircle, PlayCircle, Scale, Sliders, Eye, EyeOff, Settings, Search, Globe, Sparkles } from 'lucide-react';
 import CustomDropdown from '../components/CustomDropdown';
 
 const MailboxManager = () => {
@@ -28,6 +29,8 @@ const MailboxManager = () => {
     const [bulkUpdatingStatus, setBulkUpdatingStatus] = useState(false);
     const [syncingInbox, setSyncingInbox] = useState(false);
     const [assignedFilter, setAssignedFilter] = useState('all');
+    const [providerFilter, setProviderFilter] = useState('all'); // 'all' | 'cloudflare' | 'hostinger' | 'custom'
+    const [searchFilter, setSearchFilter] = useState('');
 
     // Multi-User Distribution Modal State
     const [assignModalOpen, setAssignModalOpen] = useState(false);
@@ -519,11 +522,33 @@ const MailboxManager = () => {
     };
 
     const filteredMailboxes = mailboxes.filter(m => {
-        if (assignedFilter === 'all') return true;
-        if (assignedFilter === 'active') return m.status === 'active';
-        if (assignedFilter === 'paused') return m.status === 'paused';
-        if (assignedFilter === 'unassigned') return !m.assignedTo;
-        return (m.assignedTo?._id || m.assignedTo) === assignedFilter;
+        // Status & assignment filter
+        if (assignedFilter === 'active' && m.status !== 'active') return false;
+        if (assignedFilter === 'paused' && m.status !== 'paused') return false;
+        if (assignedFilter === 'unassigned' && m.assignedTo) return false;
+        if (!['all', 'active', 'paused', 'unassigned'].includes(assignedFilter)) {
+            if ((m.assignedTo?._id || m.assignedTo) !== assignedFilter) return false;
+        }
+
+        // Provider filter
+        if (providerFilter === 'cloudflare') {
+            const isCf = m.provider === 'cloudflare' || m.provider === 'gmail' || (m.emailUser && m.emailUser.endsWith('@untressed.com')) || (m.smtpHost && m.smtpHost.includes('gmail.com'));
+            if (!isCf) return false;
+        } else if (providerFilter === 'hostinger') {
+            if (m.provider !== 'hostinger') return false;
+        } else if (providerFilter === 'custom') {
+            if (!['custom', 'brevo', 'resend', 'outlook'].includes(m.provider)) return false;
+        }
+
+        // Search query
+        if (searchFilter.trim()) {
+            const q = searchFilter.trim().toLowerCase();
+            const matchEmail = m.emailUser && m.emailUser.toLowerCase().includes(q);
+            const matchName = m.senderName && m.senderName.toLowerCase().includes(q);
+            if (!matchEmail && !matchName) return false;
+        }
+
+        return true;
     });
 
     const activeCount = filteredMailboxes.filter(m => m.status === 'active').length;
@@ -533,59 +558,55 @@ const MailboxManager = () => {
     return (
         <div className="animate-fade-in">
             {/* Header */}
-            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px', flexWrap: 'wrap', gap: '16px' }}>
+            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '28px', flexWrap: 'wrap', gap: '16px' }}>
                 <div>
-                    <h1 style={{ fontSize: '32px', fontWeight: 800, marginBottom: '6px' }}>Hostinger Connected Mailboxes</h1>
-                    <p style={{ color: 'var(--text-secondary)' }}>
-                        Manage your pool of email accounts. The CRM rotates outreach across these Hostinger inboxes to maintain 100% domain reputation.
+                    <h1 style={{ fontSize: '32px', fontWeight: 800, marginBottom: '6px' }}>Mailbox Dashboard</h1>
+                    <p style={{ color: 'var(--text-secondary)', margin: 0 }}>
+                        Unified fleet of all active mailboxes and outreach identities (Hostinger inboxes, Gmail, Cloudflare domain aliases, and Custom SMTP). Monitored for daily quotas and warm-up deliverability.
                     </p>
                 </div>
-                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <Link
+                        to="/email-settings"
+                        className="btn-secondary"
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#c4b5fd', borderColor: 'rgba(139, 92, 246, 0.4)' }}
+                    >
+                        <Settings size={17} />
+                        <span>Auth & Connections Hub ↗</span>
+                    </Link>
                     <button 
                         onClick={() => { setBulkModalOpen(true); setBulkResult(null); }} 
                         className="btn-secondary" 
                         style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
                     >
-                        <FileSpreadsheet size={18} />
-                        <span>Bulk Import (Excel / Text)</span>
+                        <FileSpreadsheet size={17} />
+                        <span>Bulk Import</span>
                     </button>
                     <button onClick={openCreateModal} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <Plus size={18} />
+                        <Plus size={17} />
                         <span>Connect Single Mailbox</span>
                     </button>
                 </div>
             </header>
 
-            {/* Hostinger Agentic Mail API Integration Hub */}
+            {/* Operational Fleet Command Center */}
             <div 
                 className="glass-panel" 
                 style={{ 
                     marginBottom: '28px', 
-                    padding: '24px', 
-                    background: 'linear-gradient(135deg, rgba(30, 27, 75, 0.5) 0%, rgba(15, 23, 42, 0.75) 100%)',
-                    border: '1px solid rgba(139, 92, 246, 0.35)',
-                    boxShadow: '0 8px 32px -8px rgba(124, 58, 237, 0.18)',
+                    padding: '20px 24px', 
+                    background: 'linear-gradient(135deg, rgba(30, 27, 75, 0.4) 0%, rgba(15, 23, 42, 0.7) 100%)',
+                    border: '1px solid rgba(139, 92, 246, 0.3)',
+                    boxShadow: '0 8px 32px -8px rgba(124, 58, 237, 0.15)',
                     position: 'relative',
                     overflow: 'hidden'
                 }}
             >
-                {/* Glow accent */}
-                <div style={{
-                    position: 'absolute',
-                    top: '-60px',
-                    right: '-60px',
-                    width: '200px',
-                    height: '200px',
-                    borderRadius: '50%',
-                    background: 'radial-gradient(circle, rgba(139, 92, 246, 0.25) 0%, transparent 70%)',
-                    pointerEvents: 'none'
-                }} />
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px', marginBottom: '18px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
                         <div style={{
-                            width: '46px',
-                            height: '46px',
+                            width: '44px',
+                            height: '44px',
                             borderRadius: '12px',
                             background: 'linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%)',
                             display: 'flex',
@@ -594,11 +615,11 @@ const MailboxManager = () => {
                             color: '#ffffff',
                             boxShadow: '0 4px 14px rgba(124, 58, 237, 0.4)'
                         }}>
-                            <Cpu size={24} />
+                            <Server size={22} />
                         </div>
                         <div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                                <h2 style={{ fontSize: '18px', fontWeight: 800, margin: 0 }}>Hostinger Agentic Mail API Hub</h2>
+                                <h2 style={{ fontSize: '17px', fontWeight: 800, margin: 0 }}>Multi-Provider Sending Fleet</h2>
                                 <span style={{
                                     fontSize: '11px',
                                     fontWeight: 700,
@@ -607,71 +628,22 @@ const MailboxManager = () => {
                                     display: 'inline-flex',
                                     alignItems: 'center',
                                     gap: '5px',
-                                    background: apiStatus.configured ? 'rgba(16, 185, 129, 0.2)' : 'rgba(245, 158, 11, 0.2)',
-                                    color: apiStatus.configured ? '#10b981' : '#f59e0b',
-                                    border: `1px solid ${apiStatus.configured ? 'rgba(16, 185, 129, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`
+                                    background: 'rgba(16, 185, 129, 0.15)',
+                                    color: '#10b981',
+                                    border: '1px solid rgba(16, 185, 129, 0.3)'
                                 }}>
-                                    {apiStatus.configured ? <Check size={12} /> : <AlertCircle size={12} />}
-                                    {apiStatus.configured ? `Token Active (${apiStatus.maskedKey})` : 'Token Not Configured'}
+                                    <CheckCircle2 size={12} />
+                                    {mailboxes.filter(m => m.status === 'active').length} Active Senders
                                 </span>
                             </div>
-                            <p style={{ color: 'var(--text-secondary)', fontSize: '13px', margin: '4px 0 0 0' }}>
-                                Domain: <code style={{ color: '#a78bfa', fontWeight: 600 }}>@{apiStatus.domain || 'risegrowthgroup.com'}</code> • Scope: <strong>All Mailboxes</strong> • Direct API & SMTP Multi-Engine
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '12.5px', margin: '4px 0 0 0' }}>
+                                Centralized sender network • Automatic round-robin rotation for outreach campaigns • IMAP & Webhook sync
                             </p>
                         </div>
                     </div>
 
+                    {/* Operational Quick Actions */}
                     <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-                        <button
-                            onClick={() => setShowKeyConfig(!showKeyConfig)}
-                            className="btn-secondary"
-                            style={{ fontSize: '13px', padding: '8px 14px', display: 'flex', alignItems: 'center', gap: '6px' }}
-                        >
-                            <Key size={14} />
-                            <span>{showKeyConfig ? 'Hide Token Config' : 'Update API Token'}</span>
-                        </button>
-                        <button
-                            onClick={handleSyncHostingerApi}
-                            disabled={syncingApi}
-                            style={{
-                                background: 'linear-gradient(135deg, #7c3aed 0%, #6366f1 100%)',
-                                color: '#ffffff',
-                                border: 'none',
-                                padding: '8px 18px',
-                                borderRadius: '8px',
-                                fontWeight: 700,
-                                fontSize: '13px',
-                                cursor: syncingApi ? 'not-allowed' : 'pointer',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '8px',
-                                boxShadow: '0 4px 12px rgba(124, 58, 237, 0.3)'
-                            }}
-                        >
-                            <RefreshCw size={15} className={syncingApi ? 'spin' : ''} />
-                            <span>{syncingApi ? 'Syncing Mailboxes...' : '🔄 Sync Mailboxes via API'}</span>
-                        </button>
-                        <button
-                            onClick={handleImport199Premade}
-                            disabled={importingPremade}
-                            style={{
-                                background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
-                                color: '#ffffff',
-                                border: 'none',
-                                padding: '8px 18px',
-                                borderRadius: '8px',
-                                fontWeight: 700,
-                                fontSize: '13px',
-                                cursor: importingPremade ? 'not-allowed' : 'pointer',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '8px',
-                                boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)'
-                            }}
-                        >
-                            <Zap size={15} className={importingPremade ? 'spin' : ''} />
-                            <span>{importingPremade ? 'Activating...' : '⚡ Activate All 199 Mailboxes'}</span>
-                        </button>
                         <button
                             onClick={handleSyncInbox}
                             disabled={syncingInbox}
@@ -679,19 +651,53 @@ const MailboxManager = () => {
                                 background: 'linear-gradient(135deg, #0284c7 0%, #06b6d4 100%)',
                                 color: '#ffffff',
                                 border: 'none',
-                                padding: '8px 18px',
+                                padding: '8px 16px',
                                 borderRadius: '8px',
                                 fontWeight: 700,
-                                fontSize: '13px',
+                                fontSize: '12.5px',
                                 cursor: syncingInbox ? 'not-allowed' : 'pointer',
                                 display: 'inline-flex',
                                 alignItems: 'center',
-                                gap: '8px',
-                                boxShadow: '0 4px 12px rgba(6, 182, 212, 0.3)'
+                                gap: '7px',
+                                boxShadow: '0 4px 12px rgba(6, 182, 212, 0.25)'
                             }}
+                            title="Sync received replies and check all inboxes"
                         >
                             <Inbox size={15} className={syncingInbox ? 'spin' : ''} />
                             <span>{syncingInbox ? 'Checking Inboxes...' : '📥 Sync Received Replies'}</span>
+                        </button>
+
+                        <button
+                            onClick={handleSyncHostingerApi}
+                            disabled={syncingApi}
+                            className="btn-secondary"
+                            style={{ fontSize: '12.5px', padding: '8px 14px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                            title="Sync Hostinger mailboxes via configured Agentic API"
+                        >
+                            <RefreshCw size={14} className={syncingApi ? 'spin' : ''} />
+                            <span>{syncingApi ? 'Syncing...' : 'Sync Hostinger API'}</span>
+                        </button>
+
+                        <button
+                            onClick={handleImport199Premade}
+                            disabled={importingPremade}
+                            style={{
+                                background: 'rgba(16, 185, 129, 0.15)',
+                                color: '#10b981',
+                                border: '1px solid rgba(16, 185, 129, 0.35)',
+                                padding: '8px 14px',
+                                borderRadius: '8px',
+                                fontWeight: 700,
+                                fontSize: '12.5px',
+                                cursor: importingPremade ? 'not-allowed' : 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px'
+                            }}
+                            title="Activate all 199 premade Hostinger inboxes"
+                        >
+                            <Zap size={14} className={importingPremade ? 'spin' : ''} />
+                            <span>{importingPremade ? 'Activating...' : '⚡ Activate All 199'}</span>
                         </button>
                     </div>
                 </div>
@@ -699,9 +705,9 @@ const MailboxManager = () => {
                 {/* Banner Message */}
                 {apiBannerMsg && (
                     <div style={{
-                        padding: '12px 16px',
+                        marginTop: '16px',
+                        padding: '10px 14px',
                         borderRadius: '8px',
-                        marginBottom: '16px',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
@@ -709,59 +715,16 @@ const MailboxManager = () => {
                         background: apiBannerMsg.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
                         border: `1px solid ${apiBannerMsg.type === 'success' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
                         color: apiBannerMsg.type === 'success' ? '#10b981' : '#ef4444',
-                        fontSize: '13px'
+                        fontSize: '12.5px'
                     }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            {apiBannerMsg.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+                            {apiBannerMsg.type === 'success' ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}
                             <span>{apiBannerMsg.text}</span>
                         </div>
                         <button onClick={() => setApiBannerMsg(null)} style={{ background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer', padding: '2px' }}>
                             <X size={14} />
                         </button>
                     </div>
-                )}
-
-                {/* Token Configuration Drawer / Form */}
-                {showKeyConfig && (
-                    <form onSubmit={handleSaveApiKey} style={{
-                        background: 'rgba(0, 0, 0, 0.25)',
-                        padding: '16px',
-                        borderRadius: '10px',
-                        border: '1px solid rgba(255, 255, 255, 0.08)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '12px'
-                    }}>
-                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-                            <div style={{ flex: 1, minWidth: '280px' }}>
-                                <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                                    Hostinger Agentic Mail API Token (from hPanel → Emails → Agentic Mail → API Access):
-                                </label>
-                                <input
-                                    type="password"
-                                    placeholder={apiStatus.maskedKey || "Paste your Hostinger API Token here"}
-                                    value={apiKeyInput}
-                                    onChange={(e) => setApiKeyInput(e.target.value)}
-                                    className="input-field"
-                                    style={{ width: '100%', fontFamily: 'monospace', fontSize: '13px' }}
-                                />
-                            </div>
-                            <div style={{ alignSelf: 'flex-end' }}>
-                                <button
-                                    type="submit"
-                                    disabled={savingApiKey || !apiKeyInput.trim()}
-                                    className="btn-primary"
-                                    style={{ padding: '9px 20px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
-                                >
-                                    <Key size={14} />
-                                    <span>{savingApiKey ? 'Verifying...' : 'Save & Verify Token'}</span>
-                                </button>
-                            </div>
-                        </div>
-                        <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-dim)' }}>
-                            🔒 Tokens are stored securely on your server and used to dispatch outreach via Hostinger Agentic Mail API endpoints (<code style={{ color: '#a78bfa' }}>https://api.mail.hostinger.com</code>).
-                        </p>
-                    </form>
                 )}
             </div>
 
@@ -913,26 +876,98 @@ const MailboxManager = () => {
                                 />
                             </div>
                         )}
+                        {/* Divider */}
+                        <div style={{ height: '16px', width: '1px', background: 'var(--border-color)', margin: '0 4px' }} />
+
+                        {/* Provider Filter: All / Cloudflare Aliases / Hostinger / Custom */}
+                        <button
+                            onClick={() => setProviderFilter('all')}
+                            style={{
+                                padding: '4px 9px',
+                                borderRadius: '6px',
+                                fontSize: '11.5px',
+                                fontWeight: 600,
+                                border: 'none',
+                                cursor: 'pointer',
+                                background: providerFilter === 'all' ? '#6366f1' : 'var(--bg-secondary)',
+                                color: providerFilter === 'all' ? '#fff' : 'var(--text-secondary)'
+                            }}
+                        >
+                            All Providers
+                        </button>
+                        <button
+                            onClick={() => setProviderFilter('cloudflare')}
+                            style={{
+                                padding: '4px 9px',
+                                borderRadius: '6px',
+                                fontSize: '11.5px',
+                                fontWeight: 600,
+                                border: 'none',
+                                cursor: 'pointer',
+                                background: providerFilter === 'cloudflare' ? 'linear-gradient(135deg, #f97316 0%, #7c3aed 100%)' : 'var(--bg-secondary)',
+                                color: providerFilter === 'cloudflare' ? '#fff' : 'var(--text-secondary)'
+                            }}
+                            title="Filter Cloudflare Aliases & Gmail master"
+                        >
+                            Cloudflare Aliases ({mailboxes.filter(m => m.provider === 'cloudflare' || m.provider === 'gmail' || (m.emailUser && m.emailUser.endsWith('@untressed.com')) || (m.smtpHost && m.smtpHost.includes('gmail.com'))).length})
+                        </button>
+                        <button
+                            onClick={() => setProviderFilter('hostinger')}
+                            style={{
+                                padding: '4px 9px',
+                                borderRadius: '6px',
+                                fontSize: '11.5px',
+                                fontWeight: 600,
+                                border: 'none',
+                                cursor: 'pointer',
+                                background: providerFilter === 'hostinger' ? '#7c3aed' : 'var(--bg-secondary)',
+                                color: providerFilter === 'hostinger' ? '#fff' : 'var(--text-secondary)'
+                            }}
+                        >
+                            Hostinger ({mailboxes.filter(m => m.provider === 'hostinger').length})
+                        </button>
                     </div>
 
-                    {/* Right: Select All Button */}
-                    <button
-                        onClick={toggleSelectAll}
-                        className="btn-secondary"
-                        style={{ padding: '4px 12px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', height: '30px' }}
-                    >
-                        {selectedMailboxIds.length === filteredMailboxes.length && filteredMailboxes.length > 0 ? (
-                            <>
-                                <CheckSquare size={14} style={{ color: '#10b981' }} />
-                                <span>Deselect All</span>
-                            </>
-                        ) : (
-                            <>
-                                <Square size={14} />
-                                <span>Select All ({filteredMailboxes.length})</span>
-                            </>
-                        )}
-                    </button>
+                    {/* Right: Search Box & Select All Button */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ position: 'relative' }}>
+                            <Search size={13} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)' }} />
+                            <input
+                                type="text"
+                                placeholder="Search email/name..."
+                                value={searchFilter}
+                                onChange={(e) => setSearchFilter(e.target.value)}
+                                style={{
+                                    height: '30px',
+                                    paddingLeft: '26px',
+                                    paddingRight: '10px',
+                                    borderRadius: '6px',
+                                    border: '1px solid var(--border-color)',
+                                    background: 'var(--bg-secondary)',
+                                    color: 'var(--text-primary)',
+                                    fontSize: '12px',
+                                    width: '160px'
+                                }}
+                            />
+                        </div>
+                        <button
+                            onClick={toggleSelectAll}
+                            className="btn-secondary"
+                            style={{ padding: '4px 12px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', height: '30px' }}
+                        >
+                            {selectedMailboxIds.length === filteredMailboxes.length && filteredMailboxes.length > 0 ? (
+                                <>
+                                    <CheckSquare size={14} style={{ color: '#10b981' }} />
+                                    <span>Deselect All</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Square size={14} />
+                                    <span>Select All ({filteredMailboxes.length})</span>
+                                </>
+                            )}
+                        </button>
+                    </div>
                 </div>
 
                 {/* Row 2: Bulk Actions Command Bar (Appears when mailboxes are checked) */}
@@ -1138,17 +1173,70 @@ const MailboxManager = () => {
                                         <div>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
                                                 <h3 style={{ fontSize: '16px', fontWeight: 700, margin: 0, wordBreak: 'break-all' }}>{mb.emailUser}</h3>
-                                                <span style={{
-                                                    fontSize: '10px',
-                                                    textTransform: 'uppercase',
-                                                    padding: '2px 8px',
-                                                    borderRadius: '6px',
-                                                    fontWeight: 700,
-                                                    background: mb.provider === 'hostinger' ? 'rgba(103, 58, 183, 0.2)' : 'rgba(255,255,255,0.1)',
-                                                    color: mb.provider === 'hostinger' ? '#a78bfa' : 'var(--text-secondary)'
-                                                }}>
-                                                    {mb.provider}
-                                                </span>
+                                                {/* Provider badge */}
+                                                {(() => {
+                                                    const isCf = mb.provider === 'cloudflare' || (mb.emailUser && mb.emailUser.endsWith('@untressed.com')) || (mb.smtpHost && mb.smtpHost.includes('gmail.com') && mb.provider !== 'gmail');
+                                                    if (isCf) {
+                                                        return (
+                                                            <span style={{
+                                                                fontSize: '10px',
+                                                                fontWeight: 700,
+                                                                padding: '2px 8px',
+                                                                borderRadius: '6px',
+                                                                background: 'linear-gradient(135deg, rgba(249, 115, 22, 0.2) 0%, rgba(124, 58, 237, 0.2) 100%)',
+                                                                color: '#fb923c',
+                                                                border: '1px solid rgba(249, 115, 22, 0.35)',
+                                                                display: 'inline-flex',
+                                                                alignItems: 'center',
+                                                                gap: '3px'
+                                                            }}>
+                                                                <Globe size={10} /> Cloudflare Alias
+                                                            </span>
+                                                        );
+                                                    }
+                                                    if (mb.provider === 'gmail') {
+                                                        return (
+                                                            <span style={{
+                                                                fontSize: '10px',
+                                                                fontWeight: 700,
+                                                                padding: '2px 8px',
+                                                                borderRadius: '6px',
+                                                                background: 'rgba(239, 68, 68, 0.15)',
+                                                                color: '#f87171',
+                                                                border: '1px solid rgba(239, 68, 68, 0.3)'
+                                                            }}>
+                                                                Google Mail
+                                                            </span>
+                                                        );
+                                                    }
+                                                    if (mb.provider === 'hostinger') {
+                                                        return (
+                                                            <span style={{
+                                                                fontSize: '10px',
+                                                                fontWeight: 700,
+                                                                padding: '2px 8px',
+                                                                borderRadius: '6px',
+                                                                background: 'rgba(103, 58, 183, 0.2)',
+                                                                color: '#a78bfa',
+                                                                border: '1px solid rgba(139, 92, 246, 0.3)'
+                                                            }}>
+                                                                Hostinger
+                                                            </span>
+                                                        );
+                                                    }
+                                                    return (
+                                                        <span style={{
+                                                            fontSize: '10px',
+                                                            fontWeight: 700,
+                                                            padding: '2px 8px',
+                                                            borderRadius: '6px',
+                                                            background: 'rgba(255, 255, 255, 0.1)',
+                                                            color: 'var(--text-secondary)'
+                                                        }}>
+                                                            {mb.provider}
+                                                        </span>
+                                                    );
+                                                })()}
                                                 {(mb.isApiManaged || mb.mailboxResourceId) && (
                                                     <span style={{
                                                         fontSize: '10px',

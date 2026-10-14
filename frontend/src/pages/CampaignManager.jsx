@@ -1061,7 +1061,7 @@ const CampaignManager = () => {
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                     <ShieldCheck size={18} style={{ color: 'var(--accent-color)' }} />
                                                     <span style={{ fontWeight: 700, fontSize: '13.5px', color: 'var(--text-primary)' }}>
-                                                        Hostinger Round-Robin Sender Pool
+                                                        Multi-Domain Round-Robin Sender Pool
                                                     </span>
                                                 </div>
                                                 <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '2px' }}>
@@ -1077,6 +1077,24 @@ const CampaignManager = () => {
                                                 >
                                                     {selectedMailboxes.length === mailboxes.length ? 'Deselect All' : `Select All (${mailboxes.length})`}
                                                 </button>
+                                                {mailboxes.some(m => m.provider === 'cloudflare' || (m.emailUser && m.emailUser.endsWith('@untressed.com'))) && (
+                                                    <button 
+                                                        type="button" 
+                                                        onClick={() => setSelectedMailboxes(mailboxes.filter(m => m.provider === 'cloudflare' || (m.emailUser && m.emailUser.endsWith('@untressed.com'))).map(m => m._id))} 
+                                                        style={{ background: 'rgba(249, 115, 22, 0.15)', border: '1px solid rgba(249, 115, 22, 0.35)', borderRadius: '6px', padding: '4px 8px', color: '#fb923c', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}
+                                                    >
+                                                        Cloudflare Aliases ({mailboxes.filter(m => m.provider === 'cloudflare' || (m.emailUser && m.emailUser.endsWith('@untressed.com'))).length})
+                                                    </button>
+                                                )}
+                                                {mailboxes.some(m => m.provider === 'hostinger') && (
+                                                    <button 
+                                                        type="button" 
+                                                        onClick={() => setSelectedMailboxes(mailboxes.filter(m => m.provider === 'hostinger').map(m => m._id))} 
+                                                        style={{ background: 'rgba(124, 58, 237, 0.15)', border: '1px solid rgba(124, 58, 237, 0.35)', borderRadius: '6px', padding: '4px 8px', color: '#c4b5fd', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}
+                                                    >
+                                                        Hostinger Inboxes ({mailboxes.filter(m => m.provider === 'hostinger').length})
+                                                    </button>
+                                                )}
                                                 {mailboxes.length > 10 && (
                                                     <button 
                                                         type="button" 
@@ -1084,24 +1102,6 @@ const CampaignManager = () => {
                                                         style={{ background: 'none', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '4px 8px', color: 'var(--text-secondary)', fontSize: '11px', cursor: 'pointer' }}
                                                     >
                                                         First 10
-                                                    </button>
-                                                )}
-                                                {mailboxes.length > 50 && (
-                                                    <button 
-                                                        type="button" 
-                                                        onClick={() => setSelectedMailboxes(mailboxes.slice(0, 50).map(m => m._id))} 
-                                                        style={{ background: 'none', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '4px 8px', color: 'var(--text-secondary)', fontSize: '11px', cursor: 'pointer' }}
-                                                    >
-                                                        First 50
-                                                    </button>
-                                                )}
-                                                {mailboxes.length > 100 && (
-                                                    <button 
-                                                        type="button" 
-                                                        onClick={() => setSelectedMailboxes(mailboxes.slice(0, 100).map(m => m._id))} 
-                                                        style={{ background: 'none', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '4px 8px', color: 'var(--text-secondary)', fontSize: '11px', cursor: 'pointer' }}
-                                                    >
-                                                        First 100
                                                     </button>
                                                 )}
                                             </div>
@@ -1114,7 +1114,7 @@ const CampaignManager = () => {
                                                 type="text" 
                                                 value={mailboxSearch}
                                                 onChange={e => setMailboxSearch(e.target.value)}
-                                                placeholder={`Filter across ${mailboxes.length} active Hostinger sender accounts...`}
+                                                placeholder={`Filter across ${mailboxes.length} active sender accounts and aliases...`}
                                                 className="form-input"
                                                 style={{ paddingLeft: '32px', paddingRight: '28px', fontSize: '12.5px', height: '36px' }}
                                             />
@@ -1145,6 +1145,7 @@ const CampaignManager = () => {
                                                 )
                                                 .map((mb) => {
                                                     const isSelected = selectedMailboxes.includes(mb._id);
+                                                    const isCf = mb.provider === 'cloudflare' || (mb.emailUser && mb.emailUser.endsWith('@untressed.com'));
                                                     return (
                                                         <div 
                                                             key={mb._id} 
@@ -1165,9 +1166,22 @@ const CampaignManager = () => {
                                                                         color: 'var(--text-primary)', 
                                                                         whiteSpace: 'nowrap', 
                                                                         overflow: 'hidden', 
-                                                                        textOverflow: 'ellipsis' 
+                                                                        textOverflow: 'ellipsis',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '6px'
                                                                     }}>
-                                                                        {mb.emailUser}
+                                                                        <span>{mb.emailUser}</span>
+                                                                        <span style={{
+                                                                            fontSize: '9px',
+                                                                            fontWeight: 700,
+                                                                            padding: '1px 5px',
+                                                                            borderRadius: '4px',
+                                                                            background: isCf ? 'rgba(249, 115, 22, 0.15)' : 'rgba(124, 58, 237, 0.15)',
+                                                                            color: isCf ? '#fb923c' : '#c4b5fd'
+                                                                        }}>
+                                                                            {isCf ? 'Cloudflare' : mb.provider}
+                                                                        </span>
                                                                     </div>
                                                                     <div style={{ fontSize: '10.5px', color: 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                                                         {mb.senderName || 'Staff'}

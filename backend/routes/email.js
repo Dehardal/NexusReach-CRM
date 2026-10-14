@@ -204,12 +204,19 @@ router.post('/incoming-webhook', async (req, res) => {
 });
 
 // Helper to calculate folder counts
-const getFolderCounts = async (user, filterUser, isAdmin) => {
+const getFolderCounts = async (user, filterUser, isAdmin, filterMailbox) => {
     let baseQuery = {};
     if (!isAdmin) {
         baseQuery.userId = user._id;
     } else if (filterUser && filterUser !== 'all') {
         baseQuery.userId = filterUser;
+    }
+
+    if (filterMailbox && filterMailbox !== 'all') {
+        baseQuery.$or = [
+            { to: { $regex: filterMailbox, $options: 'i' } },
+            { from: { $regex: filterMailbox, $options: 'i' } }
+        ];
     }
 
     const [unreadCount, spamCount, trashCount, starredCount] = await Promise.all([
@@ -227,7 +234,7 @@ const getFolderCounts = async (user, filterUser, isAdmin) => {
 // @access  Private
 router.get('/inbox', protect, async (req, res) => {
     try {
-        const { search, leadId, filterUser } = req.query;
+        const { search, leadId, filterUser, filterMailbox } = req.query;
         let query = { 
             direction: 'inbound',
             folder: { $in: ['inbox', null] },
@@ -240,6 +247,10 @@ router.get('/inbox', protect, async (req, res) => {
             query.userId = req.user._id;
         } else if (filterUser && filterUser !== 'all') {
             query.userId = filterUser;
+        }
+
+        if (filterMailbox && filterMailbox !== 'all') {
+            query.to = { $regex: filterMailbox, $options: 'i' };
         }
 
         if (leadId) {
@@ -262,7 +273,7 @@ router.get('/inbox', protect, async (req, res) => {
             .populate('leadId', 'name phone email company')
             .populate('userId', 'name email role');
 
-        const counts = await getFolderCounts(req.user, filterUser, isAdmin);
+        const counts = await getFolderCounts(req.user, filterUser, isAdmin, filterMailbox);
 
         res.json({ emails, ...counts });
     } catch (error) {
@@ -275,7 +286,7 @@ router.get('/inbox', protect, async (req, res) => {
 // @access  Private
 router.get('/sent', protect, async (req, res) => {
     try {
-        const { search, filterUser } = req.query;
+        const { search, filterUser, filterMailbox } = req.query;
         let query = { 
             direction: 'outbound',
             isTrash: { $ne: true }
@@ -287,6 +298,10 @@ router.get('/sent', protect, async (req, res) => {
             query.userId = req.user._id;
         } else if (filterUser && filterUser !== 'all') {
             query.userId = filterUser;
+        }
+
+        if (filterMailbox && filterMailbox !== 'all') {
+            query.from = { $regex: filterMailbox, $options: 'i' };
         }
 
         if (search) {
@@ -314,7 +329,7 @@ router.get('/sent', protect, async (req, res) => {
 // @access  Private
 router.get('/starred', protect, async (req, res) => {
     try {
-        const { search, filterUser } = req.query;
+        const { search, filterUser, filterMailbox } = req.query;
         let query = { 
             isStarred: true,
             isTrash: { $ne: true }
@@ -326,6 +341,13 @@ router.get('/starred', protect, async (req, res) => {
             query.userId = req.user._id;
         } else if (filterUser && filterUser !== 'all') {
             query.userId = filterUser;
+        }
+
+        if (filterMailbox && filterMailbox !== 'all') {
+            query.$or = [
+                { to: { $regex: filterMailbox, $options: 'i' } },
+                { from: { $regex: filterMailbox, $options: 'i' } }
+            ];
         }
 
         if (search) {
@@ -354,7 +376,7 @@ router.get('/starred', protect, async (req, res) => {
 // @access  Private
 router.get('/spam', protect, async (req, res) => {
     try {
-        const { search, filterUser } = req.query;
+        const { search, filterUser, filterMailbox } = req.query;
         let query = { 
             folder: 'spam',
             isTrash: { $ne: true }
@@ -366,6 +388,10 @@ router.get('/spam', protect, async (req, res) => {
             query.userId = req.user._id;
         } else if (filterUser && filterUser !== 'all') {
             query.userId = filterUser;
+        }
+
+        if (filterMailbox && filterMailbox !== 'all') {
+            query.to = { $regex: filterMailbox, $options: 'i' };
         }
 
         if (search) {
@@ -393,7 +419,7 @@ router.get('/spam', protect, async (req, res) => {
 // @access  Private
 router.get('/trash', protect, async (req, res) => {
     try {
-        const { search, filterUser } = req.query;
+        const { search, filterUser, filterMailbox } = req.query;
         let query = { isTrash: true };
 
         const isAdmin = ['master', 'admin', 'manager'].includes(req.user.role);
@@ -402,6 +428,13 @@ router.get('/trash', protect, async (req, res) => {
             query.userId = req.user._id;
         } else if (filterUser && filterUser !== 'all') {
             query.userId = filterUser;
+        }
+
+        if (filterMailbox && filterMailbox !== 'all') {
+            query.$or = [
+                { to: { $regex: filterMailbox, $options: 'i' } },
+                { from: { $regex: filterMailbox, $options: 'i' } }
+            ];
         }
 
         if (search) {

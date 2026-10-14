@@ -4,7 +4,8 @@ import { useToast } from '../context/ToastContext';
 import { 
     Mail, CheckCircle2, AlertTriangle, RefreshCw, Send, Lock, 
     HelpCircle, ShieldCheck, Users, Globe, ExternalLink, Key,
-    Server, Info, Copy, Check, Eye, EyeOff
+    Server, Info, Copy, Check, Eye, EyeOff, Cpu, Layers, UploadCloud,
+    FileSpreadsheet, ArrowRight, Sparkles
 } from 'lucide-react';
 import CustomDropdown from '../components/CustomDropdown';
 
@@ -14,28 +15,40 @@ const EmailSettings = () => {
 
     const isAdmin = ['master', 'admin', 'manager'].includes(user?.role);
 
-    // Active tab: 'personal' | 'cloudflare' | 'team'
-    const [activeTab, setActiveTab] = useState('personal');
+    // Active tab: 'google' | 'hostinger' | 'cloudflare' | 'custom' | 'team'
+    const [activeTab, setActiveTab] = useState('google');
 
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [testing, setTesting] = useState(false);
 
-    // Form inputs
+    // Google / Outbound Form inputs
     const [senderName, setSenderName] = useState('CRM Sales Team');
     const [emailUser, setEmailUser] = useState('');
     const [smtpUser, setSmtpUser] = useState('');
     const [emailPass, setEmailPass] = useState('');
     const [showPassword, setShowPassword] = useState(false);
-    const [provider, setProvider] = useState('resend');
-    const [smtpHost, setSmtpHost] = useState('smtp.resend.com');
-    const [smtpPort, setSmtpPort] = useState(465);
+    const [provider, setProvider] = useState('gmail');
+    const [smtpHost, setSmtpHost] = useState('smtp.gmail.com');
+    const [smtpPort, setSmtpPort] = useState(587);
 
     // Status
     const [isConfigured, setIsConfigured] = useState(false);
     const [hasPass, setHasPass] = useState(false);
     const [guideOpen, setGuideOpen] = useState(false);
     const [copiedWebhook, setCopiedWebhook] = useState(false);
+
+    // Domain Aliases Sync State
+    const [aliasesText, setAliasesText] = useState('');
+    const [syncingAliases, setSyncingAliases] = useState(false);
+    const [aliasSyncResult, setAliasSyncResult] = useState(null);
+
+    // Hostinger Agentic Mail API Integration State
+    const [hostingerStatus, setHostingerStatus] = useState({ configured: false, maskedKey: '', domain: 'risegrowthgroup.com' });
+    const [hostingerTokenInput, setHostingerTokenInput] = useState('');
+    const [savingHostingerToken, setSavingHostingerToken] = useState(false);
+    const [syncingHostinger, setSyncingHostinger] = useState(false);
+    const [hostingerBanner, setHostingerBanner] = useState(null);
 
     // Team status (for Admins)
     const [teamMailboxes, setTeamMailboxes] = useState([]);
@@ -52,14 +65,23 @@ const EmailSettings = () => {
             setSenderName(data.senderName || user?.name || 'CRM Sales Team');
             setEmailUser(data.emailUser || '');
             setSmtpUser(data.smtpUser || '');
-            setProvider(data.provider || 'resend');
-            setSmtpHost(data.smtpHost || (data.provider === 'resend' ? 'smtp.resend.com' : 'smtp.resend.com'));
-            setSmtpPort(data.smtpPort || (data.provider === 'resend' ? 465 : 587));
+            setProvider(data.provider || 'gmail');
+            setSmtpHost(data.smtpHost || (data.provider === 'gmail' ? 'smtp.gmail.com' : 'smtp.resend.com'));
+            setSmtpPort(data.smtpPort || (data.provider === 'gmail' ? 587 : 465));
             setHasPass(data.hasPass);
         } catch (err) {
             console.error('[EMAIL SETTINGS] Fetch error:', err);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const fetchHostingerStatus = async () => {
+        try {
+            const { data } = await api.get('/mailboxes/hostinger-api-status');
+            setHostingerStatus(data);
+        } catch (err) {
+            console.warn('[HOSTINGER API STATUS WARNING]', err.message);
         }
     };
 
@@ -78,46 +100,24 @@ const EmailSettings = () => {
 
     useEffect(() => {
         fetchSettings();
+        fetchHostingerStatus();
         if (isAdmin) {
             fetchTeamMailboxes();
         }
     }, [isAdmin]);
 
-    // Handle provider preset selection
-    const handleProviderChange = (newProvider) => {
-        setProvider(newProvider);
-        if (newProvider === 'resend') {
-            setSmtpHost('smtp.resend.com');
-            setSmtpPort(465);
-            setSmtpUser('resend');
-        } else if (newProvider === 'brevo') {
-            setSmtpHost('smtp-relay.brevo.com');
-            setSmtpPort(587);
-            setSmtpUser(emailUser);
-        } else if (newProvider === 'gmail') {
-            setSmtpHost('smtp.gmail.com');
-            setSmtpPort(587);
-            setSmtpUser(emailUser);
-        } else if (newProvider === 'outlook') {
-            setSmtpHost('smtp.office365.com');
-            setSmtpPort(587);
-            setSmtpUser(emailUser);
-        } else {
-            setSmtpHost('smtp.yourdomain.com');
-            setSmtpPort(587);
-            setSmtpUser(emailUser);
-        }
-    };
-
-    const handleSaveAndVerify = async (e) => {
+    // Save & Verify Outbound SMTP
+    const handleSaveAndVerify = async (e, customProvider = null) => {
         e?.preventDefault();
+        const activeProvider = customProvider || provider;
+
         if (!emailUser) {
             toast.error('Please enter your Email Address.');
             return;
         }
 
         if (!hasPass && !emailPass) {
-            toast.error('Please enter your SMTP Password or API Key.');
+            toast.error('Please enter your SMTP Password or App Password.');
             return;
         }
 
@@ -126,14 +126,14 @@ const EmailSettings = () => {
             const { data } = await api.post('/email-settings', {
                 senderName,
                 emailUser,
-                smtpUser: smtpUser || (provider === 'resend' ? 'resend' : emailUser),
+                smtpUser: smtpUser || (activeProvider === 'resend' ? 'resend' : emailUser),
                 emailPass,
-                provider,
+                provider: activeProvider,
                 smtpHost,
                 smtpPort: Number(smtpPort)
             });
 
-            toast.success(data.message || 'Credentials encrypted with AES-256 and verified successfully!');
+            toast.success(data.message || 'Credentials encrypted and synced to Mailbox Hub!');
             setIsConfigured(true);
             setHasPass(true);
             setEmailPass('');
@@ -145,6 +145,76 @@ const EmailSettings = () => {
         }
     };
 
+    // Bulk Sync Domain Aliases to Mailbox Hub
+    const handleSyncAliases = async () => {
+        if (!aliasesText.trim()) {
+            toast.error('Please enter or paste your domain email addresses.');
+            return;
+        }
+
+        setSyncingAliases(true);
+        setAliasSyncResult(null);
+        try {
+            const { data } = await api.post('/email-settings/sync-aliases', {
+                aliasesText: aliasesText.trim()
+            });
+            setAliasSyncResult({ type: 'success', message: data.message, stats: data.stats });
+            toast.success(data.message);
+            setAliasesText('');
+        } catch (err) {
+            setAliasSyncResult({
+                type: 'error',
+                message: err.response?.data?.message || 'Failed to sync domain aliases'
+            });
+            toast.error(err.response?.data?.message || 'Failed to sync domain aliases');
+        } finally {
+            setSyncingAliases(false);
+        }
+    };
+
+    // Save Hostinger API Key
+    const handleSaveHostingerKey = async (e) => {
+        if (e) e.preventDefault();
+        if (!hostingerTokenInput.trim()) return;
+
+        setSavingHostingerToken(true);
+        setHostingerBanner(null);
+        try {
+            const { data } = await api.post('/mailboxes/save-api-key', { 
+                apiKey: hostingerTokenInput.trim()
+            });
+            setHostingerBanner({ type: data.verified ? 'success' : 'warning', text: data.message });
+            setHostingerTokenInput('');
+            fetchHostingerStatus();
+            toast.success(data.message);
+        } catch (err) {
+            const msg = err.response?.data?.message || err.message || 'Failed to save Hostinger API token';
+            setHostingerBanner({ type: 'error', text: msg });
+            toast.error(msg);
+        } finally {
+            setSavingHostingerToken(false);
+        }
+    };
+
+    // Sync Hostinger Inboxes via API
+    const handleSyncHostingerApi = async () => {
+        setSyncingHostinger(true);
+        setHostingerBanner(null);
+        try {
+            const { data } = await api.post('/mailboxes/sync-hostinger-api', { defaultLimit: 500 });
+            setHostingerBanner({ type: 'success', text: data.message });
+            toast.success(data.message);
+            fetchHostingerStatus();
+        } catch (err) {
+            const msg = err.response?.data?.message || err.message || 'Hostinger API sync failed';
+            setHostingerBanner({ type: 'error', text: msg });
+            toast.error(msg);
+        } finally {
+            setSyncingHostinger(false);
+        }
+    };
+
+    // Send Test Email
     const handleSendTestEmail = async () => {
         setTesting(true);
         try {
@@ -173,37 +243,68 @@ const EmailSettings = () => {
     }
 
     return (
-        <div className="animate-fade-in" style={{ maxWidth: '850px', margin: '0 auto', paddingBottom: '40px' }}>
+        <div className="animate-fade-in" style={{ maxWidth: '960px', margin: '0 auto', paddingBottom: '50px' }}>
             <header style={{ marginBottom: '28px', textAlign: 'center' }}>
-                <h1 style={{ fontSize: '30px', fontWeight: 800, marginBottom: '8px', background: 'linear-gradient(135deg, #fff 40%, #a78bfa 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                    Domain Email & Mailbox Settings
+                <h1 style={{ fontSize: '32px', fontWeight: 800, marginBottom: '8px', background: 'linear-gradient(135deg, #fff 40%, #a78bfa 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                    Email Settings & Provider Integrations
                 </h1>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '14px', maxWidth: '620px', margin: '0 auto' }}>
-                    Connect your personalized custom domain address (e.g. <code>alex@untressed.com</code>) with AES-256 encrypted SMTP and Cloudflare Inbound Routing.
+                <p style={{ color: 'var(--text-secondary)', fontSize: '14.5px', maxWidth: '680px', margin: '0 auto' }}>
+                    The central command hub to authenticate and connect all outbound email accounts, Hostinger APIs, Cloudflare aliases, and SMTP relays.
                 </p>
             </header>
 
             {/* Navigation Tabs */}
-            <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--border-color)', marginBottom: '24px' }}>
+            <div style={{ 
+                display: 'flex', 
+                gap: '6px', 
+                borderBottom: '1px solid var(--border-color)', 
+                marginBottom: '26px',
+                overflowX: 'auto',
+                paddingBottom: '2px'
+            }}>
                 <button
-                    onClick={() => setActiveTab('personal')}
+                    onClick={() => setActiveTab('google')}
                     style={{
                         padding: '12px 18px',
                         background: 'none',
                         border: 'none',
-                        borderBottom: activeTab === 'personal' ? '2px solid var(--accent-color)' : '2px solid transparent',
-                        color: activeTab === 'personal' ? '#fff' : 'var(--text-secondary)',
-                        fontWeight: activeTab === 'personal' ? 700 : 500,
-                        fontSize: '14px',
+                        borderBottom: activeTab === 'google' ? '2px solid var(--accent-color)' : '2px solid transparent',
+                        color: activeTab === 'google' ? '#fff' : 'var(--text-secondary)',
+                        fontWeight: activeTab === 'google' ? 700 : 500,
+                        fontSize: '13.5px',
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
                         gap: '8px',
-                        transition: 'all 0.2s'
+                        whiteSpace: 'nowrap'
                     }}
                 >
                     <Mail size={16} />
-                    <span>My Outgoing SMTP</span>
+                    <span>Google & Cloudflare Aliases</span>
+                </button>
+
+                <button
+                    onClick={() => setActiveTab('hostinger')}
+                    style={{
+                        padding: '12px 18px',
+                        background: 'none',
+                        border: 'none',
+                        borderBottom: activeTab === 'hostinger' ? '2px solid var(--accent-color)' : '2px solid transparent',
+                        color: activeTab === 'hostinger' ? '#fff' : 'var(--text-secondary)',
+                        fontWeight: activeTab === 'hostinger' ? 700 : 500,
+                        fontSize: '13.5px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        whiteSpace: 'nowrap'
+                    }}
+                >
+                    <Cpu size={16} />
+                    <span>Hostinger Agentic Mail API</span>
+                    {hostingerStatus.configured && (
+                        <span style={{ fontSize: '10px', background: 'rgba(16, 185, 129, 0.2)', color: '#10b981', padding: '2px 6px', borderRadius: '4px' }}>Active</span>
+                    )}
                 </button>
 
                 <button
@@ -215,16 +316,37 @@ const EmailSettings = () => {
                         borderBottom: activeTab === 'cloudflare' ? '2px solid var(--accent-color)' : '2px solid transparent',
                         color: activeTab === 'cloudflare' ? '#fff' : 'var(--text-secondary)',
                         fontWeight: activeTab === 'cloudflare' ? 700 : 500,
-                        fontSize: '14px',
+                        fontSize: '13.5px',
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
                         gap: '8px',
-                        transition: 'all 0.2s'
+                        whiteSpace: 'nowrap'
                     }}
                 >
                     <Globe size={16} />
                     <span>Inbound Cloudflare Routing</span>
+                </button>
+
+                <button
+                    onClick={() => setActiveTab('custom')}
+                    style={{
+                        padding: '12px 18px',
+                        background: 'none',
+                        border: 'none',
+                        borderBottom: activeTab === 'custom' ? '2px solid var(--accent-color)' : '2px solid transparent',
+                        color: activeTab === 'custom' ? '#fff' : 'var(--text-secondary)',
+                        fontWeight: activeTab === 'custom' ? 700 : 500,
+                        fontSize: '13.5px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        whiteSpace: 'nowrap'
+                    }}
+                >
+                    <Server size={16} />
+                    <span>Custom SMTP / Brevo / Resend</span>
                 </button>
 
                 {isAdmin && (
@@ -237,12 +359,12 @@ const EmailSettings = () => {
                             borderBottom: activeTab === 'team' ? '2px solid var(--accent-color)' : '2px solid transparent',
                             color: activeTab === 'team' ? '#fff' : 'var(--text-secondary)',
                             fontWeight: activeTab === 'team' ? 700 : 500,
-                            fontSize: '14px',
+                            fontSize: '13.5px',
                             cursor: 'pointer',
                             display: 'flex',
                             alignItems: 'center',
                             gap: '8px',
-                            transition: 'all 0.2s'
+                            whiteSpace: 'nowrap'
                         }}
                     >
                         <Users size={16} />
@@ -251,30 +373,32 @@ const EmailSettings = () => {
                 )}
             </div>
 
-            {/* TAB 1: PERSONAL SMTP INTEGRATION */}
-            {activeTab === 'personal' && (
-                <div>
-                    {/* Connection Status Card */}
-                    <div className="glass-panel" style={{ padding: '24px', marginBottom: '24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderLeft: isConfigured ? '4px solid #10b981' : '4px solid #f87171' }}>
+            {/* ========================================== */}
+            {/* TAB 1: GOOGLE & CLOUDFLARE ALIASES */}
+            {/* ========================================== */}
+            {activeTab === 'google' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                    {/* Status Card */}
+                    <div className="glass-panel" style={{ padding: '22px 26px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderLeft: (isConfigured && provider === 'gmail') ? '4px solid #10b981' : '4px solid #f87171' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                            <div style={{ width: '42px', height: '42px', borderRadius: '50%', background: isConfigured ? 'rgba(16,185,129,0.12)' : 'rgba(248,113,113,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: isConfigured ? '#10b981' : '#f87171' }}>
-                                {isConfigured ? <CheckCircle2 size={24} /> : <AlertTriangle size={24} />}
+                            <div style={{ width: '42px', height: '42px', borderRadius: '50%', background: (isConfigured && provider === 'gmail') ? 'rgba(16,185,129,0.12)' : 'rgba(248,113,113,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: (isConfigured && provider === 'gmail') ? '#10b981' : '#f87171' }}>
+                                {(isConfigured && provider === 'gmail') ? <CheckCircle2 size={24} /> : <AlertTriangle size={24} />}
                             </div>
                             <div>
-                                <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#fff' }}>
-                                    {isConfigured ? 'Personal Mailbox Connected' : 'Mailbox Not Configured'}
+                                <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#fff', margin: 0 }}>
+                                    {(isConfigured && provider === 'gmail') ? 'Google SMTP Dispatch Engine Connected' : 'Google SMTP Not Configured'}
                                 </h3>
-                                <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                                    {isConfigured ? (
-                                        <>Outbound address: <strong style={{ color: '#fff' }}>{emailUser}</strong> via <span style={{ textTransform: 'capitalize', color: 'var(--accent-color)' }}>{provider}</span> (Encrypted AES-256)</>
+                                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
+                                    {(isConfigured && provider === 'gmail') ? (
+                                        <>Authenticated Master Sender: <strong style={{ color: '#fff' }}>{emailUser}</strong>. All Cloudflare aliases dispatch through this connection.</>
                                     ) : (
-                                        'Configure your custom domain SMTP credentials to send client outreach and follow-ups.'
+                                        'Connect your Google Account with a 16-character App Password to send emails as your domain aliases.'
                                     )}
                                 </p>
                             </div>
                         </div>
 
-                        {isConfigured && (
+                        {isConfigured && provider === 'gmail' && (
                             <button onClick={handleSendTestEmail} disabled={testing} className="btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '9px 16px', fontSize: '13px' }}>
                                 <Send size={14} />
                                 <span>{testing ? 'Sending...' : 'Send Test Email'}</span>
@@ -282,86 +406,46 @@ const EmailSettings = () => {
                         )}
                     </div>
 
-                    {/* Security Notice */}
-                    <div style={{ background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.25)', borderRadius: '12px', padding: '14px 18px', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <ShieldCheck size={22} style={{ color: 'var(--accent-color)', flexShrink: 0 }} />
-                        <div style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                            <strong style={{ color: '#fff' }}>Zero-Knowledge Credential Encryption:</strong> Your SMTP password or API key is encrypted using industry-standard <strong>AES-256-GCM</strong>. Passwords are never logged or exposed in client responses.
-                        </div>
-                    </div>
-
-                    {/* Form */}
-                    <form onSubmit={handleSaveAndVerify} className="glass-panel" style={{ padding: '32px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '14px' }}>
-                            <Server size={18} style={{ color: 'var(--accent-color)' }} />
-                            <span style={{ fontSize: '15px', fontWeight: 700, color: '#fff' }}>Outbound SMTP Configuration</span>
-                        </div>
-
-                        <div>
-                            <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                                Sender Name (Appears in Recipient's Inbox)
-                            </label>
-                            <input 
-                                type="text" 
-                                required 
-                                value={senderName} 
-                                onChange={e => setSenderName(e.target.value)} 
-                                placeholder="e.g. Alex | Support Team" 
-                                className="form-input" 
-                            />
+                    {/* Step 1: Google SMTP Authentication */}
+                    <form onSubmit={(e) => { setProvider('gmail'); setSmtpHost('smtp.gmail.com'); setSmtpPort(587); handleSaveAndVerify(e, 'gmail'); }} className="glass-panel" style={{ padding: '28px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
+                            <Key size={18} style={{ color: 'var(--accent-color)' }} />
+                            <span style={{ fontSize: '15px', fontWeight: 700, color: '#fff' }}>Step 1: Authenticate Google SMTP Account</span>
                         </div>
 
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                             <div>
                                 <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                                    Outbound Provider
+                                    Sender Display Name
                                 </label>
-                                <CustomDropdown 
-                                    value={provider} 
-                                    onChange={val => handleProviderChange(val)} 
-                                    options={[
-                                        { value: 'resend', label: 'Resend (Free 3,000/mo - Recommended)', icon: '⚡' },
-                                        { value: 'brevo', label: 'Brevo / Sendinblue (Free 300/day)', icon: '🚀' },
-                                        { value: 'custom', label: 'Custom Domain SMTP Server', icon: '⚙️' },
-                                        { value: 'gmail', label: 'Google Gmail / Workspace', icon: '✉️' },
-                                        { value: 'outlook', label: 'Microsoft Outlook / Office 365', icon: '📫' }
-                                    ]}
-                                    width="100%"
+                                <input 
+                                    type="text" 
+                                    required 
+                                    value={senderName} 
+                                    onChange={e => setSenderName(e.target.value)} 
+                                    placeholder="e.g. Master Architect" 
+                                    className="form-input" 
                                 />
                             </div>
 
                             <div>
                                 <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                                    Your Domain Email Address
+                                    Primary Google Account Email
                                 </label>
                                 <input 
                                     type="email" 
                                     required 
                                     value={emailUser} 
                                     onChange={e => setEmailUser(e.target.value)} 
-                                    placeholder="e.g. alex@untressed.com" 
+                                    placeholder="e.g. growth.untressed@gmail.com" 
                                     className="form-input" 
                                 />
                             </div>
                         </div>
 
-                        {/* Provider-specific guidelines banner */}
-                        {provider === 'resend' && (
-                            <div style={{ background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)', borderRadius: '10px', padding: '12px 16px', fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                                💡 <strong>Resend Free Tier:</strong> Go to <a href="https://resend.com" target="_blank" rel="noreferrer" style={{ color: '#10b981', textDecoration: 'underline' }}>resend.com</a>, add domain <code>untressed.com</code>, generate an API key (starting with <code>re_...</code>), and paste it below. You get 3,000 free emails every month!
-                            </div>
-                        )}
-
-                        {provider === 'brevo' && (
-                            <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.25)', borderRadius: '10px', padding: '12px 16px', fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                                💡 <strong>Brevo Free Tier:</strong> Go to <a href="https://brevo.com" target="_blank" rel="noreferrer" style={{ color: '#60a5fa', textDecoration: 'underline' }}>brevo.com</a> &gt; SMTP & API &gt; generate an SMTP Master Key. Paste your Brevo account email in SMTP User and your Master Key below.
-                            </div>
-                        )}
-
-                        {/* Password / API Key Input */}
                         <div>
                             <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                                {provider === 'resend' ? 'Resend API Key (re_...)' : provider === 'gmail' ? '16-character Google App Password' : 'SMTP Password / API Key'} {hasPass && <span style={{ color: '#10b981', fontWeight: 400 }}>(Currently Saved & Encrypted)</span>}
+                                16-character Google App Password {hasPass && <span style={{ color: '#10b981', fontWeight: 400 }}>(Currently Saved & Encrypted)</span>}
                             </label>
                             <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                                 <input 
@@ -369,9 +453,9 @@ const EmailSettings = () => {
                                     required={!hasPass}
                                     value={emailPass} 
                                     onChange={e => setEmailPass(e.target.value)} 
-                                    placeholder={hasPass ? '••••••••••••••••••••••••••••••••' : (provider === 'resend' ? 're_123456789...' : 'Enter password or API key')} 
+                                    placeholder={hasPass ? '••••••••••••••••••••••••••••••••' : 'Enter 16-character App Password (e.g. abcd efgh ijkl mnop)'} 
                                     className="form-input" 
-                                    style={{ paddingRight: '42px', width: '100%' }}
+                                    style={{ paddingRight: '42px', width: '100%', fontFamily: 'monospace' }}
                                 />
                                 <button
                                     type="button"
@@ -386,248 +470,372 @@ const EmailSettings = () => {
                                         display: 'flex',
                                         alignItems: 'center',
                                         justifyContent: 'center',
-                                        padding: '4px',
-                                        transition: 'color 0.2s ease'
+                                        padding: '4px'
                                     }}
                                     title={showPassword ? "Hide password" : "Show password"}
                                 >
                                     {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
                                 </button>
                             </div>
+                            <p style={{ margin: '6px 0 0 0', fontSize: '12px', color: '#a78bfa' }}>
+                                💡 Generate a 16-character password at: <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" style={{ color: '#c4b5fd', textDecoration: 'underline' }}>myaccount.google.com/apppasswords</a>
+                            </p>
                         </div>
 
-                        {/* Advanced SMTP Details for Custom or Brevo */}
-                        {(provider === 'custom' || provider === 'brevo') && (
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                                        SMTP Host
-                                    </label>
-                                    <input 
-                                        type="text" 
-                                        value={smtpHost} 
-                                        onChange={e => setSmtpHost(e.target.value)} 
-                                        placeholder="smtp.untressed.com" 
-                                        className="form-input" 
-                                    />
-                                </div>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                                        SMTP Port
-                                    </label>
-                                    <input 
-                                        type="number" 
-                                        value={smtpPort} 
-                                        onChange={e => setSmtpPort(e.target.value)} 
-                                        className="form-input" 
-                                    />
-                                </div>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                                        Auth Username
-                                    </label>
-                                    <input 
-                                        type="text" 
-                                        value={smtpUser} 
-                                        onChange={e => setSmtpUser(e.target.value)} 
-                                        placeholder={emailUser || 'Username'} 
-                                        className="form-input" 
-                                    />
-                                </div>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
+                            <button type="submit" disabled={saving} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 24px' }}>
+                                <Lock size={15} />
+                                <span>{saving ? 'Verifying with Google...' : 'Encrypt & Save Google Connection'}</span>
+                            </button>
+                        </div>
+                    </form>
+
+                    {/* Step 2: Bulk Sync Cloudflare / Domain Aliases */}
+                    <div className="glass-panel" style={{ padding: '28px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', flexWrap: 'wrap', gap: '10px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <Layers size={18} style={{ color: 'var(--accent-color)' }} />
+                                <span style={{ fontSize: '15px', fontWeight: 700, color: '#fff' }}>Step 2: Sync Your Domain Aliases into Mailbox Hub</span>
+                            </div>
+                            <span style={{ fontSize: '12px', background: 'rgba(139, 92, 246, 0.15)', color: '#c4b5fd', padding: '4px 10px', borderRadius: '6px' }}>
+                                Cloudflare Email Routing
+                            </span>
+                        </div>
+
+                        <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                            Paste your list of domain emails below (or paste from <code>untressed_emails.csv</code>). 
+                            These will be automatically created in the <strong>Mailbox Hub</strong> so you can rotate them in campaigns and select them in your inbox!
+                        </p>
+
+                        <textarea
+                            rows="6"
+                            value={aliasesText}
+                            onChange={(e) => setAliasesText(e.target.value)}
+                            placeholder={`liam.anderson@untressed.com\nnoah.miller@untressed.com\noliver.davis@untressed.com\n...or format as: Liam Anderson, liam.anderson@untressed.com`}
+                            className="form-input"
+                            style={{ fontFamily: 'monospace', fontSize: '12.5px', resize: 'vertical', lineHeight: 1.5 }}
+                        />
+
+                        {aliasSyncResult && (
+                            <div style={{
+                                padding: '12px 16px',
+                                borderRadius: '8px',
+                                fontSize: '13px',
+                                background: aliasSyncResult.type === 'success' ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                                border: `1px solid ${aliasSyncResult.type === 'success' ? '#10b981' : '#ef4444'}`,
+                                color: aliasSyncResult.type === 'success' ? '#10b981' : '#ef4444'
+                            }}>
+                                {aliasSyncResult.message}
                             </div>
                         )}
 
-                        <button 
-                            type="submit" 
-                            disabled={saving} 
-                            className="btn-primary" 
-                            style={{ padding: '14px', fontSize: '14px', marginTop: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-                        >
-                            {saving ? (
-                                <>
-                                    <RefreshCw size={16} className="spin" style={{ animation: 'spin 2s linear infinite' }} />
-                                    <span>Verifying Credentials with SMTP Server...</span>
-                                </>
-                            ) : (
-                                <>
-                                    <Lock size={16} />
-                                    <span>Encrypt & Save Connection</span>
-                                </>
-                            )}
-                        </button>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                            <span style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
+                                All aliases will automatically inherit your verified Google SMTP authorization.
+                            </span>
+                            <button
+                                type="button"
+                                onClick={handleSyncAliases}
+                                disabled={syncingAliases || !aliasesText.trim()}
+                                className="btn-primary"
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 22px' }}
+                            >
+                                <UploadCloud size={16} />
+                                <span>{syncingAliases ? 'Syncing to Mailbox Hub...' : 'Register & Sync Aliases to Mailbox Hub'}</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ========================================== */}
+            {/* TAB 2: HOSTINGER AGENTIC MAIL API */}
+            {/* ========================================== */}
+            {activeTab === 'hostinger' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                    {/* Status Banner */}
+                    <div className="glass-panel" style={{ padding: '24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderLeft: hostingerStatus.configured ? '4px solid #10b981' : '4px solid #f87171' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                            <div style={{ width: '42px', height: '42px', borderRadius: '50%', background: hostingerStatus.configured ? 'rgba(16,185,129,0.12)' : 'rgba(248,113,113,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: hostingerStatus.configured ? '#10b981' : '#f87171' }}>
+                                {hostingerStatus.configured ? <CheckCircle2 size={24} /> : <AlertTriangle size={24} />}
+                            </div>
+                            <div>
+                                <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#fff', margin: 0 }}>
+                                    {hostingerStatus.configured ? 'Hostinger Agentic Mail API Connected' : 'Hostinger API Not Configured'}
+                                </h3>
+                                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
+                                    {hostingerStatus.configured ? (
+                                        <>Active Domain: <strong style={{ color: '#fff' }}>{hostingerStatus.domain}</strong> (Key: <code>{hostingerStatus.maskedKey}</code>)</>
+                                    ) : (
+                                        'Connect your Hostinger Business Email account via Agentic Mail API for automated mailbox provisioning and sync.'
+                                    )}
+                                </p>
+                            </div>
+                        </div>
+
+                        {hostingerStatus.configured && (
+                            <button
+                                onClick={handleSyncHostingerApi}
+                                disabled={syncingHostinger}
+                                className="btn-secondary"
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '9px 18px', fontSize: '13px' }}
+                            >
+                                <RefreshCw size={15} className={syncingHostinger ? 'spin' : ''} />
+                                <span>{syncingHostinger ? 'Syncing...' : 'Sync All Hostinger Inboxes'}</span>
+                            </button>
+                        )}
+                    </div>
+
+                    {hostingerBanner && (
+                        <div style={{
+                            padding: '12px 16px',
+                            borderRadius: '8px',
+                            fontSize: '13px',
+                            background: hostingerBanner.type === 'success' ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                            border: `1px solid ${hostingerBanner.type === 'success' ? '#10b981' : '#ef4444'}`,
+                            color: hostingerBanner.type === 'success' ? '#10b981' : '#ef4444'
+                        }}>
+                            {hostingerBanner.text}
+                        </div>
+                    )}
+
+                    {/* Hostinger API Key Form */}
+                    <form onSubmit={handleSaveHostingerKey} className="glass-panel" style={{ padding: '28px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
+                            <Cpu size={18} style={{ color: 'var(--accent-color)' }} />
+                            <span style={{ fontSize: '15px', fontWeight: 700, color: '#fff' }}>Configure Hostinger API Credentials</span>
+                        </div>
+
+                        <div>
+                            <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                                Hostinger Agentic Mail API Token
+                            </label>
+                            <input 
+                                type="password" 
+                                value={hostingerTokenInput} 
+                                onChange={e => setHostingerTokenInput(e.target.value)} 
+                                placeholder={hostingerStatus.maskedKey || "Paste your 64-character Hostinger API Token"} 
+                                className="form-input" 
+                                style={{ fontFamily: 'monospace', fontSize: '13px' }}
+                            />
+                            <p style={{ margin: '6px 0 0 0', fontSize: '12px', color: 'var(--text-dim)' }}>
+                                💡 Find this in Hostinger hPanel → <strong>Emails</strong> → <strong>Agentic Mail</strong> → <strong>API Access</strong>.
+                            </p>
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                            <button
+                                type="submit"
+                                disabled={savingHostingerToken || !hostingerTokenInput.trim()}
+                                className="btn-primary"
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 22px' }}
+                            >
+                                <Lock size={15} />
+                                <span>{savingHostingerToken ? 'Verifying with Hostinger...' : 'Save & Verify Hostinger Token'}</span>
+                            </button>
+                        </div>
                     </form>
                 </div>
             )}
 
-            {/* TAB 2: CLOUDFLARE INBOUND ROUTING SETUP */}
+            {/* ========================================== */}
+            {/* TAB 3: INBOUND CLOUDFLARE ROUTING */}
+            {/* ========================================== */}
             {activeTab === 'cloudflare' && (
-                <div className="glass-panel" style={{ padding: '32px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px' }}>
-                        <Globe size={22} style={{ color: 'var(--accent-color)' }} />
-                        <div>
-                            <h3 style={{ fontSize: '17px', fontWeight: 700, color: '#fff' }}>Cloudflare Free Inbound Email Architecture</h3>
-                            <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>How your custom domain receives emails without any paid email hosting</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                    <div className="glass-panel" style={{ padding: '28px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
+                            <Globe size={18} style={{ color: 'var(--accent-color)' }} />
+                            <span style={{ fontSize: '15px', fontWeight: 700, color: '#fff' }}>Inbound Email Routing via Cloudflare</span>
                         </div>
-                    </div>
 
-                    {/* How It Works Diagram */}
-                    <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '12px', padding: '20px', border: '1px solid var(--border-color)' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', textAlign: 'center', position: 'relative' }}>
-                            <div style={{ background: 'rgba(99,102,241,0.1)', padding: '14px', borderRadius: '8px', border: '1px solid rgba(99,102,241,0.2)' }}>
-                                <div style={{ fontSize: '12px', color: 'var(--accent-color)', fontWeight: 700 }}>STEP 1</div>
-                                <div style={{ fontSize: '13px', fontWeight: 600, color: '#fff', marginTop: '4px' }}>Client Sends Mail</div>
-                                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>To user@untressed.com</div>
-                            </div>
-                            <div style={{ background: 'rgba(245,158,11,0.1)', padding: '14px', borderRadius: '8px', border: '1px solid rgba(245,158,11,0.2)' }}>
-                                <div style={{ fontSize: '12px', color: '#f59e0b', fontWeight: 700 }}>STEP 2</div>
-                                <div style={{ fontSize: '13px', fontWeight: 600, color: '#fff', marginTop: '4px' }}>Cloudflare Routing</div>
-                                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>Routes to Worker</div>
-                            </div>
-                            <div style={{ background: 'rgba(16,185,129,0.1)', padding: '14px', borderRadius: '8px', border: '1px solid rgba(16,185,129,0.2)' }}>
-                                <div style={{ fontSize: '12px', color: '#10b981', fontWeight: 700 }}>STEP 3</div>
-                                <div style={{ fontSize: '13px', fontWeight: 600, color: '#fff', marginTop: '4px' }}>Cloudflare Worker</div>
-                                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>POST to Webhook</div>
-                            </div>
-                            <div style={{ background: 'rgba(139,92,246,0.1)', padding: '14px', borderRadius: '8px', border: '1px solid rgba(139,92,246,0.2)' }}>
-                                <div style={{ fontSize: '12px', color: '#a78bfa', fontWeight: 700 }}>STEP 4</div>
-                                <div style={{ fontSize: '13px', fontWeight: 600, color: '#fff', marginTop: '4px' }}>CRM Inbox</div>
-                                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>Assigned to User</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Active Webhook URL */}
-                    <div>
-                        <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>
-                            Your Live Inbound Webhook Endpoint
-                        </label>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                            <input 
-                                type="text" 
-                                readOnly 
-                                value={webhookUrl} 
-                                className="form-input" 
-                                style={{ fontFamily: 'monospace', fontSize: '12.5px', color: '#a78bfa' }} 
-                            />
-                            <button 
-                                onClick={copyWebhook} 
-                                className="btn-secondary" 
-                                style={{ display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}
-                            >
-                                {copiedWebhook ? <Check size={14} style={{ color: '#10b981' }} /> : <Copy size={14} />}
-                                <span>{copiedWebhook ? 'Copied' : 'Copy'}</span>
-                            </button>
-                        </div>
-                        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '6px' }}>
-                            This URL is automatically bridged to your local backend via the secure Cloudflare Tunnel daemon.
+                        <p style={{ fontSize: '13.5px', color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}>
+                            Cloudflare Email Routing receives all incoming customer replies and forwards them directly into your CRM and Gmail inboxes in real-time.
                         </p>
-                    </div>
 
-                    {/* Cloudflare Worker Code Snippet */}
-                    <div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                            <label style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                                Cloudflare Email Worker Code (<code>email-worker.js</code>)
+                        <div>
+                            <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>
+                                Inbound Webhook URL (HTTP POST)
                             </label>
-                            <a 
-                                href="https://dash.cloudflare.com" 
-                                target="_blank" 
-                                rel="noreferrer" 
-                                style={{ fontSize: '12px', color: 'var(--accent-color)', display: 'flex', alignItems: 'center', gap: '4px' }}
-                            >
-                                <span>Open Cloudflare Dashboard</span>
-                                <ExternalLink size={12} />
-                            </a>
+                            <div style={{ display: 'flex', gap: '10px' }}>
+                                <input
+                                    type="text"
+                                    readOnly
+                                    value={webhookUrl}
+                                    className="form-input"
+                                    style={{ fontFamily: 'monospace', fontSize: '13px', background: 'var(--bg-secondary)', color: 'var(--accent-color)' }}
+                                />
+                                <button
+                                    onClick={copyWebhook}
+                                    className="btn-secondary"
+                                    style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '0 18px', whiteSpace: 'nowrap' }}
+                                >
+                                    {copiedWebhook ? <Check size={16} color="#10b981" /> : <Copy size={16} />}
+                                    <span>{copiedWebhook ? 'Copied!' : 'Copy URL'}</span>
+                                </button>
+                            </div>
                         </div>
-                        <pre style={{ background: 'rgba(0,0,0,0.4)', padding: '16px', borderRadius: '8px', fontSize: '12px', fontFamily: 'monospace', color: '#e2e8f0', overflowX: 'auto', border: '1px solid var(--border-color)', lineHeight: 1.5 }}>
-{`export default {
-  async email(message, env, ctx) {
-    const rawEmail = await new Response(message.raw).text();
-    const payload = {
-      from: message.from,
-      to: message.to,
-      subject: message.headers.get("subject") || "(No Subject)",
-      raw: rawEmail
-    };
 
-    await fetch("${webhookUrl}", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-  }
-};`}
-                        </pre>
+                        <div style={{ background: 'rgba(139, 92, 246, 0.08)', border: '1px solid rgba(139, 92, 246, 0.25)', borderRadius: '10px', padding: '16px', fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                            <strong>Quick Setup Guide:</strong>
+                            <ol style={{ margin: '8px 0 0 0', paddingLeft: '20px' }}>
+                                <li>Log into <strong>dash.cloudflare.com</strong> and select your domain.</li>
+                                <li>Navigate to <strong>Email Routing</strong> → <strong>Routing Rules</strong>.</li>
+                                <li>Ensure destination address is set to <strong>growth.untressed@gmail.com</strong> (or use an Email Worker with the Webhook URL above).</li>
+                                <li>All replies will immediately synchronize into your CRM inbox!</li>
+                            </ol>
+                        </div>
                     </div>
                 </div>
             )}
 
-            {/* TAB 3: ADMIN TEAM MAILBOXES AUDIT */}
-            {activeTab === 'team' && isAdmin && (
-                <div className="glass-panel" style={{ padding: '28px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                        <div>
-                            <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#fff' }}>Team Mailbox Deployment Status</h3>
-                            <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                                Monitor domain email configurations and outbound security across all CRM users
-                            </p>
+            {/* ========================================== */}
+            {/* TAB 4: CUSTOM SMTP / OTHER PROVIDERS */}
+            {/* ========================================== */}
+            {activeTab === 'custom' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                    <form onSubmit={(e) => handleSaveAndVerify(e, provider)} className="glass-panel" style={{ padding: '28px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
+                            <Server size={18} style={{ color: 'var(--accent-color)' }} />
+                            <span style={{ fontSize: '15px', fontWeight: 700, color: '#fff' }}>Custom Outbound SMTP / Relay</span>
                         </div>
-                        <button 
-                            onClick={fetchTeamMailboxes} 
-                            disabled={loadingTeam} 
-                            className="btn-secondary" 
-                            style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', padding: '8px 14px' }}
-                        >
-                            <RefreshCw size={14} className={loadingTeam ? 'spin' : ''} style={loadingTeam ? { animation: 'spin 2s linear infinite' } : {}} />
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                            <div>
+                                <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                                    Outbound Provider
+                                </label>
+                                <CustomDropdown 
+                                    value={provider} 
+                                    onChange={val => {
+                                        setProvider(val);
+                                        if (val === 'resend') { setSmtpHost('smtp.resend.com'); setSmtpPort(465); }
+                                        else if (val === 'brevo') { setSmtpHost('smtp-relay.brevo.com'); setSmtpPort(587); }
+                                        else if (val === 'outlook') { setSmtpHost('smtp.office365.com'); setSmtpPort(587); }
+                                    }} 
+                                    options={[
+                                        { value: 'resend', label: 'Resend (Free 3,000/mo - Recommended)', icon: '⚡' },
+                                        { value: 'brevo', label: 'Brevo / Sendinblue (Free 300/day)', icon: '🚀' },
+                                        { value: 'outlook', label: 'Microsoft Outlook / Office 365', icon: '📫' },
+                                        { value: 'custom', label: 'Custom cPanel / Private SMTP', icon: '⚙️' }
+                                    ]}
+                                    width="100%"
+                                />
+                            </div>
+
+                            <div>
+                                <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                                    Sender Email Address
+                                </label>
+                                <input 
+                                    type="email" 
+                                    required 
+                                    value={emailUser} 
+                                    onChange={e => setEmailUser(e.target.value)} 
+                                    placeholder="outreach@yourdomain.com" 
+                                    className="form-input" 
+                                />
+                            </div>
+                        </div>
+
+                        <div>
+                            <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                                SMTP Password or API Key
+                            </label>
+                            <input 
+                                type="password" 
+                                value={emailPass} 
+                                onChange={e => setEmailPass(e.target.value)} 
+                                placeholder={hasPass ? '••••••••••••••••••••••••••••••••' : 'Enter password or API key'} 
+                                className="form-input" 
+                            />
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                            <div>
+                                <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                                    SMTP Host
+                                </label>
+                                <input 
+                                    type="text" 
+                                    value={smtpHost} 
+                                    onChange={e => setSmtpHost(e.target.value)} 
+                                    placeholder="smtp.resend.com" 
+                                    className="form-input" 
+                                />
+                            </div>
+                            <div>
+                                <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                                    SMTP Port
+                                </label>
+                                <input 
+                                    type="number" 
+                                    value={smtpPort} 
+                                    onChange={e => setSmtpPort(e.target.value)} 
+                                    className="form-input" 
+                                />
+                            </div>
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
+                            <button type="submit" disabled={saving} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 22px' }}>
+                                <Lock size={15} />
+                                <span>{saving ? 'Testing & Saving...' : 'Save & Verify Custom SMTP'}</span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            )}
+
+            {/* ========================================== */}
+            {/* TAB 5: TEAM MAILBOXES AUDIT (ADMIN ONLY) */}
+            {/* ========================================== */}
+            {activeTab === 'team' && isAdmin && (
+                <div className="glass-panel" style={{ padding: '24px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <Users size={18} style={{ color: 'var(--accent-color)' }} />
+                            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: '#fff' }}>Team Email Configuration Audit</h3>
+                        </div>
+                        <button onClick={fetchTeamMailboxes} className="btn-secondary" style={{ padding: '6px 12px', fontSize: '12px' }}>
+                            <RefreshCw size={14} className={loadingTeam ? 'spin' : ''} />
                             <span>Refresh</span>
                         </button>
                     </div>
 
                     <div style={{ overflowX: 'auto' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
                             <thead>
-                                <tr style={{ borderBottom: '1px solid var(--border-color)', textAlign: 'left', color: 'var(--text-secondary)' }}>
-                                    <th style={{ padding: '12px 10px' }}>User</th>
-                                    <th style={{ padding: '12px 10px' }}>Role</th>
-                                    <th style={{ padding: '12px 10px' }}>Domain Mailbox</th>
-                                    <th style={{ padding: '12px 10px' }}>Provider</th>
-                                    <th style={{ padding: '12px 10px' }}>Status</th>
+                                <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}>
+                                    <th style={{ padding: '10px 12px' }}>User</th>
+                                    <th style={{ padding: '10px 12px' }}>Role</th>
+                                    <th style={{ padding: '10px 12px' }}>Domain Email</th>
+                                    <th style={{ padding: '10px 12px' }}>Provider</th>
+                                    <th style={{ padding: '10px 12px' }}>Status</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {teamMailboxes.map(member => (
-                                    <tr key={member.userId} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                        <td style={{ padding: '14px 10px' }}>
-                                            <div style={{ fontWeight: 600, color: '#fff' }}>{member.name}</div>
-                                            <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>{member.loginEmail}</div>
+                                {teamMailboxes.map(t => (
+                                    <tr key={t.userId} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                                        <td style={{ padding: '12px' }}>
+                                            <div style={{ fontWeight: 600, color: '#fff' }}>{t.name}</div>
+                                            <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>{t.loginEmail}</div>
                                         </td>
-                                        <td style={{ padding: '14px 10px' }}>
-                                            <span style={{ 
-                                                textTransform: 'uppercase', 
-                                                fontSize: '10.5px', 
-                                                fontWeight: 700, 
-                                                padding: '3px 8px', 
-                                                borderRadius: '6px',
-                                                background: member.role === 'master' ? 'rgba(239, 68, 68, 0.15)' : member.role === 'admin' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.08)',
-                                                color: member.role === 'master' ? '#f87171' : member.role === 'admin' ? '#818cf8' : '#cbd5e1'
-                                            }}>
-                                                {member.role}
+                                        <td style={{ padding: '12px' }}>
+                                            <span style={{ textTransform: 'capitalize', background: 'rgba(255, 255, 255, 0.08)', padding: '2px 8px', borderRadius: '4px', fontSize: '11px' }}>
+                                                {t.role}
                                             </span>
                                         </td>
-                                        <td style={{ padding: '14px 10px', fontFamily: member.domainEmail !== 'Not Configured' ? 'monospace' : 'inherit', color: member.domainEmail !== 'Not Configured' ? '#a78bfa' : 'var(--text-secondary)' }}>
-                                            {member.domainEmail}
-                                        </td>
-                                        <td style={{ padding: '14px 10px', textTransform: 'capitalize', color: 'var(--text-secondary)' }}>
-                                            {member.provider}
-                                        </td>
-                                        <td style={{ padding: '14px 10px' }}>
-                                            {member.isConfigured ? (
-                                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', color: '#10b981', fontWeight: 600, fontSize: '12px' }}>
-                                                    <CheckCircle2 size={14} /> Active
+                                        <td style={{ padding: '12px', fontFamily: 'monospace' }}>{t.domainEmail}</td>
+                                        <td style={{ padding: '12px', textTransform: 'capitalize' }}>{t.provider}</td>
+                                        <td style={{ padding: '12px' }}>
+                                            {t.isConfigured ? (
+                                                <span style={{ color: '#10b981', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                    <CheckCircle2 size={14} /> Connected
                                                 </span>
                                             ) : (
-                                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', color: '#f87171', fontSize: '12px' }}>
-                                                    <AlertTriangle size={14} /> Inactive
+                                                <span style={{ color: '#f87171', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                    <AlertTriangle size={14} /> Unconfigured
                                                 </span>
                                             )}
                                         </td>
