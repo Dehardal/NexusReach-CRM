@@ -161,8 +161,8 @@ const sendFollowUpNotification = async (leadData, followUpData, salesPersonName,
     }
 };
 
-// Send direct client email (supports user-specific credentials)
-const sendDirectClientEmail = async (toEmail, subject, htmlBody, userId = null) => {
+// Send direct client email (supports user-specific credentials & custom sender aliases)
+const sendDirectClientEmail = async (toEmail, subject, htmlBody, userId = null, customSender = null) => {
     try {
         const { transporter, creds } = await createTransporter(userId);
         
@@ -170,12 +170,14 @@ const sendDirectClientEmail = async (toEmail, subject, htmlBody, userId = null) 
             ? htmlBody 
             : htmlBody.replace(/\n/g, '<br/>');
 
+        const senderAddress = (customSender && customSender.trim()) ? customSender.trim().toLowerCase() : creds.user;
+
         const mailOptions = {
             from: {
                 name: creds.name || 'CRM Outreach',
-                address: creds.user
+                address: senderAddress
             },
-            replyTo: creds.user,
+            replyTo: senderAddress,
             to: toEmail,
             subject: subject,
             html: `
@@ -186,8 +188,8 @@ const sendDirectClientEmail = async (toEmail, subject, htmlBody, userId = null) 
         };
 
         const info = await transporter.sendMail(mailOptions);
-        console.log(`✅ Direct client email sent to ${toEmail} from ${creds.user} successfully!`);
-        return { success: true, messageId: info.messageId, sender: creds.user };
+        console.log(`✅ Direct client email sent to ${toEmail} from ${senderAddress} successfully!`);
+        return { success: true, messageId: info.messageId, sender: senderAddress };
     } catch (error) {
         console.error('❌ Error sending direct client email:', error.message);
         throw error;

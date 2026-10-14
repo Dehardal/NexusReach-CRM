@@ -34,6 +34,8 @@ const EmailInbox = () => {
     const [filterUser, setFilterUser] = useState('all');
     const [teamMembers, setTeamMembers] = useState([]);
     const [myMailboxAddress, setMyMailboxAddress] = useState('');
+    const [availableSenders, setAvailableSenders] = useState([]);
+    const [selectedSender, setSelectedSender] = useState('');
 
     // Compose Modal
     const [composeOpen, setComposeOpen] = useState(false);
@@ -47,14 +49,25 @@ const EmailInbox = () => {
     const [sendingReply, setSendingReply] = useState(false);
     const [copiedCode, setCopiedCode] = useState(false);
 
-    // Fetch user metadata & team members
+    // Fetch user metadata, connected mailboxes & team members
     useEffect(() => {
         const fetchMeta = async () => {
             try {
                 const { data } = await api.get('/email-settings');
                 if (data?.emailUser) {
                     setMyMailboxAddress(data.emailUser);
+                    setSelectedSender(prev => prev || data.emailUser);
                 }
+
+                // Load all connected mailboxes to populate the Sender dropdown
+                try {
+                    const mbRes = await api.get('/mailboxes');
+                    if (Array.isArray(mbRes.data)) {
+                        const addresses = mbRes.data.map(m => m.email).filter(Boolean);
+                        setAvailableSenders(addresses);
+                    }
+                } catch (e) {}
+
                 if (isAdmin) {
                     const teamRes = await api.get('/email-settings/team');
                     setTeamMembers(Array.isArray(teamRes.data) ? teamRes.data : []);
@@ -330,7 +343,8 @@ const EmailInbox = () => {
                 to: composeTo,
                 subject: composeSubject,
                 text: composeBody,
-                html: `<div style="font-family: sans-serif; line-height: 1.6; color: #1f2937;">${composeBody.replace(/\n/g, '<br/>')}</div>`
+                html: `<div style="font-family: sans-serif; line-height: 1.6; color: #1f2937;">${composeBody.replace(/\n/g, '<br/>')}</div>`,
+                from: selectedSender || myMailboxAddress
             });
 
             toast.success('Email sent successfully!');
@@ -1139,22 +1153,32 @@ const EmailInbox = () => {
 
                         {/* Scrollable Form Body */}
                         <div className="modal-body-scroll">
-                            {myMailboxAddress && (
-                                <div style={{ 
-                                    fontSize: '12.5px', 
-                                    color: 'var(--text-secondary)', 
-                                    background: 'var(--bg-secondary)', 
-                                    padding: '8px 14px', 
-                                    borderRadius: '8px',
-                                    border: '1px solid var(--border-color)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '6px'
-                                }}>
-                                    <span>Sending from:</span>
-                                    <strong style={{ color: 'var(--accent-color)', fontFamily: 'monospace' }}>{myMailboxAddress}</strong>
+                            {/* Sender Selector */}
+                            <div>
+                                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                    Send From (Sender Address)
+                                </label>
+                                <div>
+                                    <input
+                                        type="email"
+                                        list="sender-options-list"
+                                        value={selectedSender || myMailboxAddress}
+                                        onChange={(e) => setSelectedSender(e.target.value)}
+                                        placeholder="e.g. liam.anderson@untressed.com"
+                                        className="form-input"
+                                        style={{ width: '100%', fontFamily: 'monospace', fontSize: '13px' }}
+                                    />
+                                    <datalist id="sender-options-list">
+                                        {myMailboxAddress && <option value={myMailboxAddress}>{myMailboxAddress} (Default Outbound)</option>}
+                                        {availableSenders.map(s => (
+                                            <option key={s} value={s}>{s}</option>
+                                        ))}
+                                    </datalist>
                                 </div>
-                            )}
+                                <span style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '4px', display: 'block' }}>
+                                    💡 Select from connected mailboxes or enter any custom alias on your domain (e.g. <code>name@untressed.com</code>).
+                                </span>
+                            </div>
 
                             <div>
                                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>

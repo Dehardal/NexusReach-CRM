@@ -558,15 +558,16 @@ router.put('/:id/restore', protect, async (req, res) => {
 // @route   POST /api/email/send
 // @access  Private
 router.post('/send', protect, async (req, res) => {
-    const { to, subject, html, text, leadId } = req.body;
+    const { to, subject, html, text, leadId, from, fromEmail } = req.body;
 
     if (!to || !subject || (!html && !text)) {
         return res.status(400).json({ message: 'Recipient (to), subject, and body are required' });
     }
 
     try {
-        // Send through user's personal configured credentials
-        const sendResult = await sendDirectClientEmail(to, subject, html || text, req.user._id);
+        // Send through user's personal configured credentials with optional sender alias
+        const senderAddress = (fromEmail || from || '').trim();
+        const sendResult = await sendDirectClientEmail(to, subject, html || text, req.user._id, senderAddress);
 
         // Record outbound email stamped with req.user._id
         const newEmail = await Email.create({
