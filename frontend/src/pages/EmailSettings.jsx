@@ -4,7 +4,7 @@ import { useToast } from '../context/ToastContext';
 import { 
     Mail, CheckCircle2, AlertTriangle, RefreshCw, Send, Lock, 
     HelpCircle, ShieldCheck, Users, Globe, ExternalLink, Key,
-    Server, Info, Copy, Check
+    Server, Info, Copy, Check, Eye, EyeOff
 } from 'lucide-react';
 import CustomDropdown from '../components/CustomDropdown';
 
@@ -26,6 +26,7 @@ const EmailSettings = () => {
     const [emailUser, setEmailUser] = useState('');
     const [smtpUser, setSmtpUser] = useState('');
     const [emailPass, setEmailPass] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
     const [provider, setProvider] = useState('resend');
     const [smtpHost, setSmtpHost] = useState('smtp.resend.com');
     const [smtpPort, setSmtpPort] = useState(465);
@@ -362,14 +363,37 @@ const EmailSettings = () => {
                             <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
                                 {provider === 'resend' ? 'Resend API Key (re_...)' : provider === 'gmail' ? '16-character Google App Password' : 'SMTP Password / API Key'} {hasPass && <span style={{ color: '#10b981', fontWeight: 400 }}>(Currently Saved & Encrypted)</span>}
                             </label>
-                            <input 
-                                type="password" 
-                                required={!hasPass}
-                                value={emailPass} 
-                                onChange={e => setEmailPass(e.target.value)} 
-                                placeholder={hasPass ? '••••••••••••••••••••••••••••••••' : (provider === 'resend' ? 're_123456789...' : 'Enter password or API key')} 
-                                className="form-input" 
-                            />
+                            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                                <input 
+                                    type={showPassword ? "text" : "password"} 
+                                    required={!hasPass}
+                                    value={emailPass} 
+                                    onChange={e => setEmailPass(e.target.value)} 
+                                    placeholder={hasPass ? '••••••••••••••••••••••••••••••••' : (provider === 'resend' ? 're_123456789...' : 'Enter password or API key')} 
+                                    className="form-input" 
+                                    style={{ paddingRight: '42px', width: '100%' }}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPassword(!showPassword)}
+                                    style={{
+                                        position: 'absolute',
+                                        right: '12px',
+                                        background: 'transparent',
+                                        border: 'none',
+                                        color: showPassword ? 'var(--accent-color)' : 'var(--text-dim)',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        padding: '4px',
+                                        transition: 'color 0.2s ease'
+                                    }}
+                                    title={showPassword ? "Hide password" : "Show password"}
+                                >
+                                    {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                                </button>
+                            </div>
                         </div>
 
                         {/* Advanced SMTP Details for Custom or Brevo */}

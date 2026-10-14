@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Mail, Plus, CheckCircle2, AlertCircle, RefreshCw, Trash2, Power, ShieldCheck, Zap, Server, FileSpreadsheet, Download, UploadCloud, FileText, X, Key, Cpu, Check, Users, UserCheck, Inbox, CheckSquare, Square, Filter, PauseCircle, PlayCircle, Scale, Sliders } from 'lucide-react';
+import { Mail, Plus, CheckCircle2, AlertCircle, RefreshCw, Trash2, Power, ShieldCheck, Zap, Server, FileSpreadsheet, Download, UploadCloud, FileText, X, Key, Cpu, Check, Users, UserCheck, Inbox, CheckSquare, Square, Filter, PauseCircle, PlayCircle, Scale, Sliders, Eye, EyeOff } from 'lucide-react';
 import CustomDropdown from '../components/CustomDropdown';
 
 const MailboxManager = () => {
@@ -9,6 +9,7 @@ const MailboxManager = () => {
     const [loading, setLoading] = useState(true);
     const [modalOpen, setModalOpen] = useState(false);
     const [testingId, setTestingId] = useState(null);
+    const [showAddPass, setShowAddPass] = useState(false);
 
     // Hostinger Agentic Mail API Integration State
     const [apiStatus, setApiStatus] = useState({ configured: false, maskedKey: '', domain: 'risegrowthgroup.com' });
@@ -1370,14 +1371,37 @@ const MailboxManager = () => {
                                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '5px' }}>
                                     {provider === 'gmail' ? 'Google App Password (16 characters)' : 'Email / SMTP Password'}
                                 </label>
-                                <input 
-                                    type="password" 
-                                    required 
-                                    value={emailPass} 
-                                    onChange={e => setEmailPass(e.target.value)} 
-                                    className="form-input" 
-                                    placeholder={provider === 'gmail' ? 'abcd efgh ijkl mnop' : 'Your email password'} 
-                                />
+                                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                                    <input 
+                                        type={showAddPass ? "text" : "password"} 
+                                        required 
+                                        value={emailPass} 
+                                        onChange={e => setEmailPass(e.target.value)} 
+                                        className="form-input" 
+                                        style={{ paddingRight: '40px', width: '100%' }}
+                                        placeholder={provider === 'gmail' ? 'abcd efgh ijkl mnop' : 'Your email password'} 
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowAddPass(!showAddPass)}
+                                        style={{
+                                            position: 'absolute',
+                                            right: '12px',
+                                            background: 'transparent',
+                                            border: 'none',
+                                            color: showAddPass ? 'var(--accent-color)' : 'var(--text-dim)',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            padding: '4px',
+                                            transition: 'color 0.2s ease'
+                                        }}
+                                        title={showAddPass ? "Hide password" : "Show password"}
+                                    >
+                                        {showAddPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                                    </button>
+                                </div>
                                 {provider === 'gmail' && (
                                     <p style={{ margin: '4px 0 0 0', fontSize: '11.5px', color: '#a78bfa' }}>
                                         💡 For Gmail/Workspace: Generate a 16-character App Password under your Google Account → Security → 2-Step Verification → App Passwords.
