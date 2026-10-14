@@ -65,6 +65,11 @@ const emailSchema = new mongoose.Schema({
         type: Boolean,
         default: false
     },
+    isStarred: {
+        type: Boolean,
+        default: false,
+        index: true
+    },
     messageId: {
         type: String,
         default: ''

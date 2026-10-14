@@ -1,12 +1,15 @@
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { 
     Mail, Inbox, Send, RefreshCw, Search, PlusCircle, 
     Trash2, Reply, CheckCircle2, User, Clock, ShieldCheck, 
     ExternalLink, Sparkles, X, ChevronRight, AlertOctagon,
-    Copy, Check, ShieldAlert, RotateCcw, Key
+    Copy, Check, ShieldAlert, RotateCcw, Key, Star, Forward,
+    Printer, MailOpen, Filter
 } from 'lucide-react';
+import CustomDropdown from '../components/CustomDropdown';
 
 const EmailInbox = () => {
     const { api, socket, user } = useAuth();
@@ -14,15 +17,18 @@ const EmailInbox = () => {
 
     const isAdmin = ['master', 'admin', 'manager'].includes(user?.role);
 
-    // Tabs: 'inbox' | 'sent' | 'spam' | 'trash'
+    // Tabs: 'inbox' | 'starred' | 'sent' | 'spam' | 'trash'
     const [activeTab, setActiveTab] = useState('inbox');
     const [emails, setEmails] = useState([]);
     const [unreadCount, setUnreadCount] = useState(0);
+    const [starredCount, setStarredCount] = useState(0);
     const [spamCount, setSpamCount] = useState(0);
     const [trashCount, setTrashCount] = useState(0);
     const [selectedEmail, setSelectedEmail] = useState(null);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
+    const [onlyUnread, setOnlyUnread] = useState(false);
+    const [syncingHostinger, setSyncingHostinger] = useState(false);
 
     // Multi-User Isolation & Admin Switching
     const [filterUser, setFilterUser] = useState('all');
@@ -77,6 +83,7 @@ const EmailInbox = () => {
             if (activeTab === 'inbox') {
                 setEmails(data.emails || []);
                 setUnreadCount(data.unreadCount || 0);
+                setStarredCount(data.starredCount || 0);
                 setSpamCount(data.spamCount || 0);
                 setTrashCount(data.trashCount || 0);
                 if (!selectedEmail && data.emails && data.emails.length > 0) {
@@ -85,6 +92,7 @@ const EmailInbox = () => {
             } else {
                 const list = Array.isArray(data) ? data : (data.emails || []);
                 setEmails(list);
+                if (data.starredCount !== undefined) setStarredCount(data.starredCount);
                 if (!selectedEmail && list && list.length > 0) {
                     setSelectedEmail(list[0]);
                 }
@@ -236,6 +244,78 @@ const EmailInbox = () => {
         }
     };
 
+    // Toggle Starred
+    const handleToggleStar = async (id, e) => {
+        e?.stopPropagation();
+        try {
+            const { data } = await api.put(`/email/${id}/star`);
+            setEmails(prev => prev.map(m => m._id === id ? { ...m, isStarred: data.isStarred } : m));
+            if (selectedEmail?._id === id) {
+                setSelectedEmail(prev => ({ ...prev, isStarred: data.isStarred }));
+            }
+            setStarredCount(prev => data.isStarred ? prev + 1 : Math.max(0, prev - 1));
+            if (activeTab === 'starred' && !data.isStarred) {
+                setEmails(prev => prev.filter(m => m._id !== id));
+            }
+            toast.success(data.isStarred ? 'Conversation starred ⭐' : 'Conversation unstarred');
+        } catch (err) {
+            toast.error('Failed to update star');
+        }
+    };
+
+    // Toggle Read / Unread
+    const handleToggleUnread = async (email, e) => {
+        e?.stopPropagation();
+        try {
+            const willBeRead = !email.isRead;
+            if (willBeRead) {
+                await api.put(`/email/${email._id}/read`);
+                setUnreadCount(prev => Math.max(0, prev - 1));
+                toast.success('Marked as read');
+            } else {
+                await api.put(`/email/${email._id}/unread`);
+                setUnreadCount(prev => prev + 1);
+                toast.success('Marked as unread');
+            }
+            setEmails(prev => prev.map(m => m._id === email._id ? { ...m, isRead: willBeRead } : m));
+            if (selectedEmail?._id === email._id) {
+                setSelectedEmail(prev => ({ ...prev, isRead: willBeRead }));
+            }
+        } catch (err) {
+            toast.error('Failed to update read status');
+        }
+    };
+
+    // Forward Email
+    const handleForward = () => {
+        if (!selectedEmail) return;
+        setComposeTo('');
+        setComposeSubject(selectedEmail.subject?.startsWith('Fwd:') ? selectedEmail.subject : `Fwd: ${selectedEmail.subject || ''}`);
+        const forwardHeader = `\n\n---------- Forwarded message ---------\nFrom: ${selectedEmail.fromName || selectedEmail.from} <${selectedEmail.from}>\nDate: ${new Date(selectedEmail.createdAt).toLocaleString()}\nSubject: ${selectedEmail.subject || ''}\nTo: ${selectedEmail.to}\n\n`;
+        setComposeBody(forwardHeader + (selectedEmail.text || ''));
+        setComposeOpen(true);
+    };
+
+    // Print Email
+    const handlePrint = () => {
+        window.print();
+    };
+
+    // Live Sync with Hostinger (both Inboxes and Sent folders)
+    const handleSyncHostinger = async () => {
+        setSyncingHostinger(true);
+        try {
+            const { data } = await api.post('/mailboxes/sync-inbox');
+            toast.success(data.message || 'Hostinger webmail inboxes & sent folders synced!');
+            await fetchEmails();
+        } catch (err) {
+            await fetchEmails();
+            toast.info('Mailbox refreshed');
+        } finally {
+            setSyncingHostinger(false);
+        }
+    };
+
     // Send new compose email
     const handleSendCompose = async (e) => {
         e?.preventDefault();
@@ -326,33 +406,48 @@ const EmailInbox = () => {
     };
 
     return (
-        <div className="animate-fade-in" style={{ height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' }}>
-            {/* Top Toolbar */}
-            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div className="mail-fullpage animate-fade-in">
+            {/* Sleek Integrated Top Bar */}
+            <header className="mail-topbar">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{
+                        width: '32px',
+                        height: '32px',
+                        borderRadius: '8px',
+                        background: 'rgba(124, 58, 237, 0.12)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: 'var(--accent-color)'
+                    }}>
+                        <Inbox size={18} />
+                    </div>
                     <div>
-                        <h1 style={{ fontSize: '28px', fontWeight: 800, margin: 0 }}>Domain Mailbox</h1>
-                        <p style={{ color: 'var(--text-secondary)', fontSize: '13.5px', margin: '4px 0 0 0' }}>
-                            Send & receive emails, OTP verification codes, and client inquiries on your custom domain
-                        </p>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <h1 style={{ fontSize: '17px', fontWeight: 800, margin: 0, color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
+                                Domain Mailbox
+                            </h1>
+                            <span style={{
+                                fontSize: '11px',
+                                padding: '1px 8px',
+                                borderRadius: '12px',
+                                background: 'rgba(16, 185, 129, 0.1)',
+                                color: '#10b981',
+                                border: '1px solid rgba(16, 185, 129, 0.2)',
+                                fontWeight: 600
+                            }}>
+                                Live Sync
+                            </span>
+                        </div>
                     </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     {/* Logged in mailbox status */}
-                    <div style={{ 
-                        display: 'flex', 
-                        alignItems: 'center', 
-                        gap: '8px', 
-                        background: 'rgba(255, 255, 255, 0.05)', 
-                        padding: '7px 14px', 
-                        borderRadius: '20px', 
-                        border: '1px solid var(--border-color)', 
-                        fontSize: '12.5px' 
-                    }}>
-                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: myMailboxAddress ? '#10b981' : '#f87171' }}></span>
+                    <div className="mail-status-pill" style={{ padding: '5px 12px', fontSize: '12px' }}>
+                        <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: myMailboxAddress ? '#10b981' : '#f87171', flexShrink: 0 }}></span>
                         <span style={{ color: 'var(--text-secondary)' }}>Mailbox:</span>
-                        <span style={{ color: '#fff', fontWeight: 600, fontFamily: myMailboxAddress ? 'monospace' : 'inherit' }}>
+                        <span className="mail-status-pill-val" style={{ fontFamily: myMailboxAddress ? 'monospace' : 'inherit', fontSize: '12px' }}>
                             {myMailboxAddress || 'Not Configured'}
                         </span>
                     </div>
@@ -360,91 +455,81 @@ const EmailInbox = () => {
                     <button 
                         onClick={() => setComposeOpen(true)}
                         className="btn-primary"
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '10px 18px', fontSize: '13.5px' }}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 14px', fontSize: '13px' }}
                     >
-                        <PlusCircle size={16} />
+                        <PlusCircle size={15} />
                         <span>Compose Email</span>
+                    </button>
+                    <button 
+                        onClick={handleSyncHostinger}
+                        disabled={syncingHostinger}
+                        className="btn-secondary"
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 12px', fontSize: '13px' }}
+                        title="Sync directly with Hostinger Webmail (both incoming emails & emails sent from mail.hostinger.com)"
+                    >
+                        <RefreshCw size={14} className={syncingHostinger ? 'spin' : ''} />
+                        <span>{syncingHostinger ? 'Syncing...' : 'Sync Webmail'}</span>
                     </button>
                     <button 
                         onClick={fetchEmails}
                         className="btn-secondary"
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '10px 16px', fontSize: '13.5px' }}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 12px', fontSize: '13px' }}
                         title="Refresh Mailbox"
                     >
-                        <RefreshCw size={15} className={loading ? 'spin' : ''} />
+                        <RefreshCw size={14} className={loading ? 'spin' : ''} />
                     </button>
                 </div>
             </header>
 
-            {/* Mailbox Main Layout (Two Pane) */}
-            <div className="glass-panel" style={{ flexGrow: 1, display: 'flex', overflow: 'hidden', padding: 0 }}>
+            {/* Mailbox Main Two-Pane Layout - Edge to Edge */}
+            <div className="mail-workspace">
+                <div className="mail-container">
                 
                 {/* Left Column: Folders & Email List */}
-                <div style={{ width: '380px', flexShrink: 0, borderRight: '1px solid rgba(255, 255, 255, 0.08)', display: 'flex', flexDirection: 'column' }}>
+                <div className="mail-sidebar">
                     
                     {/* Folder Tabs & Search */}
-                    <div style={{ padding: '16px', borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                    <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color)' }}>
                         {/* Admin Mailbox Filter Dropdown */}
                         {isAdmin && (
                             <div style={{ marginBottom: '12px' }}>
                                 <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
                                     Viewing Mailbox
                                 </label>
-                                <select
+                                <CustomDropdown
                                     value={filterUser}
-                                    onChange={(e) => {
-                                        setFilterUser(e.target.value);
+                                    onChange={(val) => {
+                                        setFilterUser(val);
                                         setSelectedEmail(null);
                                     }}
-                                    className="form-input"
-                                    style={{
-                                        width: '100%',
-                                        padding: '7px 10px',
-                                        fontSize: '12.5px',
-                                        background: 'rgba(255, 255, 255, 0.05)',
-                                        border: '1px solid rgba(255, 255, 255, 0.1)',
-                                        color: '#fff'
-                                    }}
-                                >
-                                    <option value="all" style={{ background: '#1e1b4b' }}>🌐 All Team Mailboxes</option>
-                                    {teamMembers.map((m) => (
-                                        <option key={m.userId} value={m.userId} style={{ background: '#1e1b4b' }}>
-                                            {m.name} ({m.domainEmail !== 'Not Configured' ? m.domainEmail : 'No Domain'})
-                                        </option>
-                                    ))}
-                                </select>
+                                    options={[
+                                        { value: 'all', label: 'All Team Mailboxes', icon: '🌐' },
+                                        ...teamMembers.map((m) => ({
+                                            value: m.userId,
+                                            label: `${m.name} (${m.domainEmail !== 'Not Configured' ? m.domainEmail : 'No Domain'})`,
+                                            icon: '✉️'
+                                        }))
+                                    ]}
+                                    width="100%"
+                                />
                             </div>
                         )}
 
-                        {/* Four Folder Buttons */}
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginBottom: '14px' }}>
+                        {/* Five Folder Buttons (Inbox, Starred, Sent, Spam, Trash) */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px', marginBottom: '14px' }}>
                             <button
                                 onClick={() => { setActiveTab('inbox'); setSelectedEmail(null); }}
-                                style={{
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    gap: '4px',
-                                    padding: '8px 4px',
-                                    borderRadius: '8px',
-                                    border: 'none',
-                                    cursor: 'pointer',
-                                    fontWeight: 600,
-                                    fontSize: '11.5px',
-                                    background: activeTab === 'inbox' ? 'var(--accent-color)' : 'rgba(255, 255, 255, 0.05)',
-                                    color: activeTab === 'inbox' ? '#fff' : 'var(--text-secondary)'
-                                }}
+                                className={`mail-folder-btn ${activeTab === 'inbox' ? 'active' : ''}`}
                             >
-                                <Inbox size={15} />
+                                <Inbox size={14} />
                                 <span>Inbox</span>
                                 {unreadCount > 0 && (
                                     <span style={{
-                                        background: activeTab === 'inbox' ? '#fff' : 'var(--accent-color)',
-                                        color: activeTab === 'inbox' ? 'var(--accent-color)' : '#fff',
-                                        fontSize: '10px',
+                                        background: activeTab === 'inbox' ? 'rgba(255, 255, 255, 0.25)' : 'var(--accent-color)',
+                                        color: '#fff',
+                                        fontSize: '9.5px',
                                         fontWeight: 700,
-                                        padding: '0 5px',
+                                        padding: '0 4px',
                                         borderRadius: '8px'
                                     }}>
                                         {unreadCount}
@@ -453,54 +538,46 @@ const EmailInbox = () => {
                             </button>
 
                             <button
-                                onClick={() => { setActiveTab('sent'); setSelectedEmail(null); }}
-                                style={{
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    gap: '4px',
-                                    padding: '8px 4px',
-                                    borderRadius: '8px',
-                                    border: 'none',
-                                    cursor: 'pointer',
-                                    fontWeight: 600,
-                                    fontSize: '11.5px',
-                                    background: activeTab === 'sent' ? 'var(--accent-color)' : 'rgba(255, 255, 255, 0.05)',
-                                    color: activeTab === 'sent' ? '#fff' : 'var(--text-secondary)'
-                                }}
+                                onClick={() => { setActiveTab('starred'); setSelectedEmail(null); }}
+                                className={`mail-folder-btn ${activeTab === 'starred' ? 'active-starred' : ''}`}
                             >
-                                <Send size={15} />
+                                <Star size={14} fill={activeTab === 'starred' ? '#fff' : 'none'} />
+                                <span>Starred</span>
+                                {starredCount > 0 && (
+                                    <span style={{
+                                        background: activeTab === 'starred' ? 'rgba(255, 255, 255, 0.25)' : '#f59e0b',
+                                        color: '#fff',
+                                        fontSize: '9.5px',
+                                        fontWeight: 700,
+                                        padding: '0 4px',
+                                        borderRadius: '8px'
+                                    }}>
+                                        {starredCount}
+                                    </span>
+                                )}
+                            </button>
+
+                            <button
+                                onClick={() => { setActiveTab('sent'); setSelectedEmail(null); }}
+                                className={`mail-folder-btn ${activeTab === 'sent' ? 'active' : ''}`}
+                            >
+                                <Send size={14} />
                                 <span>Sent</span>
                             </button>
 
                             <button
                                 onClick={() => { setActiveTab('spam'); setSelectedEmail(null); }}
-                                style={{
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    gap: '4px',
-                                    padding: '8px 4px',
-                                    borderRadius: '8px',
-                                    border: 'none',
-                                    cursor: 'pointer',
-                                    fontWeight: 600,
-                                    fontSize: '11.5px',
-                                    background: activeTab === 'spam' ? '#ea580c' : 'rgba(255, 255, 255, 0.05)',
-                                    color: activeTab === 'spam' ? '#fff' : 'var(--text-secondary)'
-                                }}
+                                className={`mail-folder-btn ${activeTab === 'spam' ? 'active-spam' : ''}`}
                             >
-                                <AlertOctagon size={15} />
+                                <AlertOctagon size={14} />
                                 <span>Spam</span>
                                 {spamCount > 0 && (
                                     <span style={{
-                                        background: activeTab === 'spam' ? '#fff' : '#ea580c',
-                                        color: activeTab === 'spam' ? '#ea580c' : '#fff',
-                                        fontSize: '10px',
+                                        background: activeTab === 'spam' ? 'rgba(255, 255, 255, 0.25)' : '#ea580c',
+                                        color: '#fff',
+                                        fontSize: '9.5px',
                                         fontWeight: 700,
-                                        padding: '0 5px',
+                                        padding: '0 4px',
                                         borderRadius: '8px'
                                     }}>
                                         {spamCount}
@@ -510,31 +587,17 @@ const EmailInbox = () => {
 
                             <button
                                 onClick={() => { setActiveTab('trash'); setSelectedEmail(null); }}
-                                style={{
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    gap: '4px',
-                                    padding: '8px 4px',
-                                    borderRadius: '8px',
-                                    border: 'none',
-                                    cursor: 'pointer',
-                                    fontWeight: 600,
-                                    fontSize: '11.5px',
-                                    background: activeTab === 'trash' ? '#dc2626' : 'rgba(255, 255, 255, 0.05)',
-                                    color: activeTab === 'trash' ? '#fff' : 'var(--text-secondary)'
-                                }}
+                                className={`mail-folder-btn ${activeTab === 'trash' ? 'active-trash' : ''}`}
                             >
-                                <Trash2 size={15} />
+                                <Trash2 size={14} />
                                 <span>Trash</span>
                                 {trashCount > 0 && (
                                     <span style={{
-                                        background: activeTab === 'trash' ? '#fff' : '#dc2626',
-                                        color: activeTab === 'trash' ? '#dc2626' : '#fff',
-                                        fontSize: '10px',
+                                        background: activeTab === 'trash' ? 'rgba(255, 255, 255, 0.25)' : '#dc2626',
+                                        color: '#fff',
+                                        fontSize: '9.5px',
                                         fontWeight: 700,
-                                        padding: '0 5px',
+                                        padding: '0 4px',
                                         borderRadius: '8px'
                                     }}>
                                         {trashCount}
@@ -543,53 +606,80 @@ const EmailInbox = () => {
                             </button>
                         </div>
 
-                        {/* Search Bar */}
-                        <div style={{ position: 'relative' }}>
-                            <Search size={15} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)' }} />
-                            <input
-                                type="text"
-                                placeholder={`Search ${activeTab}...`}
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
+                        {/* Search Bar & Unread Filter */}
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <div className="mail-search-box" style={{ flexGrow: 1 }}>
+                                <Search size={15} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)', pointerEvents: 'none' }} />
+                                <input
+                                    type="text"
+                                    className="mail-search-input"
+                                    placeholder={`Search ${activeTab}...`}
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                />
+                            </div>
+                            <button
+                                onClick={() => setOnlyUnread(!onlyUnread)}
                                 style={{
-                                    width: '100%',
-                                    padding: '8px 12px 8px 36px',
-                                    background: 'rgba(255, 255, 255, 0.04)',
-                                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                                    background: onlyUnread ? 'var(--accent-color)' : 'var(--bg-secondary)',
+                                    color: onlyUnread ? '#fff' : 'var(--text-secondary)',
+                                    border: '1px solid var(--border-color)',
                                     borderRadius: '8px',
-                                    color: 'var(--text-primary)',
-                                    fontSize: '12.5px',
-                                    outline: 'none'
+                                    padding: '0 10px',
+                                    fontSize: '11.5px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '5px',
+                                    height: '36px',
+                                    flexShrink: 0,
+                                    transition: 'all 0.15s ease'
                                 }}
-                            />
+                                title="Filter unread emails only"
+                            >
+                                <Filter size={13} />
+                                <span>{onlyUnread ? 'Unread' : 'All'}</span>
+                            </button>
                         </div>
                     </div>
 
                     {/* Email List Items */}
                     <div style={{ flexGrow: 1, overflowY: 'auto' }}>
-                        {loading ? (
-                            <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-dim)' }}>
-                                <RefreshCw size={20} className="spin" style={{ marginBottom: '8px', animation: 'spin 1.5s linear infinite' }} />
-                                <p style={{ fontSize: '13px' }}>Loading emails...</p>
-                            </div>
-                        ) : emails.length === 0 ? (
-                            <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-dim)' }}>
-                                <Mail size={32} style={{ opacity: 0.3, marginBottom: '8px' }} />
-                                <p style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                                    {activeTab === 'inbox' ? 'Inbox is empty' : activeTab === 'sent' ? 'No sent emails' : activeTab === 'spam' ? 'No spam emails' : 'Trash is empty'}
-                                </p>
-                                <p style={{ fontSize: '12px', maxWidth: '240px', margin: '6px auto 0' }}>
-                                    {activeTab === 'inbox' 
-                                        ? 'Emails & verification codes sent to your custom domain will automatically appear here in real-time.' 
-                                        : activeTab === 'spam'
-                                            ? 'Suspicious or junk emails automatically filtered away from your primary inbox.'
-                                            : activeTab === 'trash'
-                                                ? 'Deleted emails are kept here until permanently purged.'
-                                                : 'Outreach emails sent from the CRM will be logged here.'}
-                                </p>
-                            </div>
-                        ) : (
-                            emails.map((email) => {
+                        {(() => {
+                            const displayedEmails = onlyUnread ? emails.filter(e => !e.isRead) : emails;
+                            if (loading) {
+                                return (
+                                    <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-dim)' }}>
+                                        <RefreshCw size={22} className="spin" style={{ marginBottom: '8px', opacity: 0.7 }} />
+                                        <p style={{ fontSize: '13px' }}>Loading messages...</p>
+                                    </div>
+                                );
+                            }
+                            if (displayedEmails.length === 0) {
+                                return (
+                                    <div style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--text-dim)' }}>
+                                        <Mail size={36} style={{ opacity: 0.25, marginBottom: '10px' }} />
+                                        <p style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                            {onlyUnread ? 'No unread messages' : activeTab === 'inbox' ? 'Inbox is empty' : activeTab === 'starred' ? 'No starred emails' : activeTab === 'sent' ? 'No sent emails' : activeTab === 'spam' ? 'No spam emails' : 'Trash is empty'}
+                                        </p>
+                                        <p style={{ fontSize: '12px', maxWidth: '240px', margin: '6px auto 0', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                                            {onlyUnread 
+                                                ? 'All emails in this folder have been read.'
+                                                : activeTab === 'starred'
+                                                    ? 'Star important emails to quickly access them here anytime.'
+                                                    : activeTab === 'inbox' 
+                                                        ? 'Emails & verification codes sent to your custom domain will automatically appear here in real-time.' 
+                                                        : activeTab === 'spam'
+                                                            ? 'Suspicious or junk emails automatically filtered away from your primary inbox.'
+                                                            : activeTab === 'trash'
+                                                                ? 'Deleted emails are kept here until permanently purged.'
+                                                                : 'Outreach emails sent from the CRM will be logged here.'}
+                                        </p>
+                                    </div>
+                                );
+                            }
+                            return displayedEmails.map((email) => {
                                 const isSelected = selectedEmail?._id === email._id;
                                 const isUnread = !email.isRead && email.direction === 'inbound';
 
@@ -597,45 +687,61 @@ const EmailInbox = () => {
                                     <div
                                         key={email._id}
                                         onClick={() => handleSelectEmail(email)}
-                                        style={{
-                                            padding: '14px 16px',
-                                            cursor: 'pointer',
-                                            borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
-                                            background: isSelected 
-                                                ? 'rgba(139, 92, 246, 0.12)' 
-                                                : isUnread 
-                                                    ? 'rgba(255, 255, 255, 0.03)' 
-                                                    : 'transparent',
-                                            borderLeft: isSelected 
-                                                ? '3px solid var(--accent-color)' 
-                                                : isUnread 
-                                                    ? '3px solid #3b82f6' 
-                                                    : '3px solid transparent',
-                                            transition: 'background 0.15s ease'
-                                        }}
+                                        className={`mail-item ${isSelected ? 'selected' : ''}`}
                                     >
+                                        {/* Top row: Star + Sender + Timestamp */}
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                                            <span style={{
-                                                fontWeight: isUnread ? 700 : 600,
-                                                fontSize: '13px',
-                                                color: isUnread ? 'var(--text-primary)' : 'var(--text-secondary)',
-                                                whiteSpace: 'nowrap',
-                                                overflow: 'hidden',
-                                                textOverflow: 'ellipsis',
-                                                maxWidth: '220px'
-                                            }}>
-                                                {activeTab === 'sent' ? `To: ${email.to}` : (email.fromName || email.from)}
-                                            </span>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+                                                <button
+                                                    onClick={(e) => handleToggleStar(email._id, e)}
+                                                    style={{
+                                                        background: 'none',
+                                                        border: 'none',
+                                                        padding: '0',
+                                                        cursor: 'pointer',
+                                                        color: email.isStarred ? '#f59e0b' : 'var(--text-dim)',
+                                                        display: 'inline-flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        flexShrink: 0
+                                                    }}
+                                                    title={email.isStarred ? 'Unstar conversation' : 'Star conversation'}
+                                                >
+                                                    <Star size={13} fill={email.isStarred ? '#f59e0b' : 'none'} />
+                                                </button>
+                                                {isUnread && (
+                                                    <span style={{ 
+                                                        width: '7px', 
+                                                        height: '7px', 
+                                                        borderRadius: '50%', 
+                                                        background: 'var(--accent-color)', 
+                                                        flexShrink: 0,
+                                                        boxShadow: '0 0 6px var(--accent-color)'
+                                                    }} />
+                                                )}
+                                                <span style={{
+                                                    fontWeight: isUnread ? 700 : 600,
+                                                    fontSize: '13px',
+                                                    color: 'var(--text-primary)',
+                                                    whiteSpace: 'nowrap',
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                    maxWidth: '200px'
+                                                }}>
+                                                    {activeTab === 'sent' ? `To: ${email.to}` : (email.fromName || email.from)}
+                                                </span>
+                                            </div>
                                             <span style={{ fontSize: '11px', color: 'var(--text-dim)', flexShrink: 0 }}>
                                                 {formatEmailTime(email.createdAt)}
                                             </span>
                                         </div>
 
+                                        {/* Subject line */}
                                         <p style={{
                                             margin: '0 0 4px 0',
                                             fontWeight: isUnread ? 700 : 500,
                                             fontSize: '13px',
-                                            color: isUnread ? '#fff' : 'var(--text-primary)',
+                                            color: 'var(--text-primary)',
                                             whiteSpace: 'nowrap',
                                             overflow: 'hidden',
                                             textOverflow: 'ellipsis'
@@ -643,26 +749,30 @@ const EmailInbox = () => {
                                             {email.subject || '(No Subject)'}
                                         </p>
 
+                                        {/* Snippet preview */}
                                         <p style={{
                                             margin: 0,
                                             fontSize: '12px',
-                                            color: 'var(--text-dim)',
+                                            color: 'var(--text-secondary)',
                                             whiteSpace: 'nowrap',
                                             overflow: 'hidden',
-                                            textOverflow: 'ellipsis'
+                                            textOverflow: 'ellipsis',
+                                            lineHeight: 1.4
                                         }}>
                                             {email.verificationCode ? `🔑 Code: ${email.verificationCode} - ` : ''}
                                             {email.text ? email.text.substring(0, 80) : '(Empty email content)'}
                                         </p>
 
+                                        {/* Tag pills */}
                                         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '6px' }}>
                                             {email.verificationCode && (
                                                 <span style={{
                                                     fontSize: '10px',
-                                                    padding: '1px 6px',
+                                                    padding: '2px 7px',
                                                     borderRadius: '4px',
-                                                    background: 'rgba(16, 185, 129, 0.2)',
-                                                    color: '#34d399',
+                                                    background: 'rgba(16, 185, 129, 0.12)',
+                                                    color: '#10b981',
+                                                    border: '1px solid rgba(16, 185, 129, 0.25)',
                                                     fontWeight: 700,
                                                     display: 'inline-flex',
                                                     alignItems: 'center',
@@ -675,10 +785,11 @@ const EmailInbox = () => {
                                             {email.leadId && (
                                                 <span style={{
                                                     fontSize: '10.5px',
-                                                    padding: '1px 6px',
+                                                    padding: '2px 7px',
                                                     borderRadius: '4px',
-                                                    background: 'rgba(16, 185, 129, 0.12)',
-                                                    color: '#10b981',
+                                                    background: 'rgba(59, 130, 246, 0.12)',
+                                                    color: '#3b82f6',
+                                                    border: '1px solid rgba(59, 130, 246, 0.25)',
                                                     fontWeight: 600
                                                 }}>
                                                     Lead: {email.leadId.name || 'Client'}
@@ -688,10 +799,11 @@ const EmailInbox = () => {
                                             {isAdmin && filterUser === 'all' && email.userId && (
                                                 <span style={{
                                                     fontSize: '10px',
-                                                    padding: '1px 6px',
+                                                    padding: '2px 7px',
                                                     borderRadius: '4px',
-                                                    background: 'rgba(139, 92, 246, 0.15)',
-                                                    color: '#c4b5fd',
+                                                    background: 'rgba(139, 92, 246, 0.12)',
+                                                    color: 'var(--accent-color)',
+                                                    border: '1px solid rgba(139, 92, 246, 0.25)',
                                                     fontWeight: 600
                                                 }}>
                                                     👤 {email.userId.name || email.userId.email}
@@ -700,29 +812,80 @@ const EmailInbox = () => {
                                         </div>
                                     </div>
                                 );
-                            })
-                        )}
+                            });
+                        })()}
                     </div>
                 </div>
 
                 {/* Right Column: Email Reader Pane */}
-                <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                <div className="mail-reading-pane">
                     {selectedEmail ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
                             {/* Email Header Card */}
-                            <div style={{ padding: '20px 24px', borderBottom: '1px solid rgba(255, 255, 255, 0.08)', background: 'rgba(255, 255, 255, 0.02)' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                                    <h2 style={{ fontSize: '20px', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
+                            <div className="mail-header-card">
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px', gap: '16px' }}>
+                                    <h2 style={{ fontSize: '20px', fontWeight: 800, margin: 0, color: 'var(--text-primary)', lineHeight: 1.3 }}>
                                         {selectedEmail.subject || '(No Subject)'}
                                     </h2>
 
-                                    {/* Action Buttons */}
-                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                    {/* Action Buttons Toolbar */}
+                                    <div style={{ display: 'flex', gap: '6px', flexShrink: 0, alignItems: 'center', flexWrap: 'wrap' }}>
+                                        {/* Star Toggle */}
+                                        <button 
+                                            onClick={(e) => handleToggleStar(selectedEmail._id, e)}
+                                            className="btn-secondary"
+                                            style={{ 
+                                                display: 'flex', 
+                                                alignItems: 'center', 
+                                                gap: '6px', 
+                                                fontSize: '12px', 
+                                                padding: '6px 10px',
+                                                color: selectedEmail.isStarred ? '#f59e0b' : 'var(--text-secondary)'
+                                            }}
+                                            title={selectedEmail.isStarred ? 'Unstar email' : 'Star email'}
+                                        >
+                                            <Star size={14} fill={selectedEmail.isStarred ? '#f59e0b' : 'none'} />
+                                            <span>{selectedEmail.isStarred ? 'Starred' : 'Star'}</span>
+                                        </button>
+
+                                        {/* Mark Read / Unread */}
+                                        <button 
+                                            onClick={(e) => handleToggleUnread(selectedEmail, e)}
+                                            className="btn-secondary"
+                                            style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '6px 10px' }}
+                                            title={selectedEmail.isRead ? 'Mark as Unread' : 'Mark as Read'}
+                                        >
+                                            <MailOpen size={14} />
+                                            <span>{selectedEmail.isRead ? 'Mark Unread' : 'Mark Read'}</span>
+                                        </button>
+
+                                        {/* Forward */}
+                                        <button 
+                                            onClick={handleForward}
+                                            className="btn-secondary"
+                                            style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '6px 10px' }}
+                                            title="Forward email"
+                                        >
+                                            <Forward size={14} />
+                                            <span>Forward</span>
+                                        </button>
+
+                                        {/* Print */}
+                                        <button 
+                                            onClick={handlePrint}
+                                            className="btn-secondary"
+                                            style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '6px 10px' }}
+                                            title="Print email"
+                                        >
+                                            <Printer size={14} />
+                                            <span>Print</span>
+                                        </button>
+
                                         {activeTab === 'spam' ? (
                                             <button 
                                                 onClick={() => handleUnspam(selectedEmail._id)}
                                                 className="btn-secondary"
-                                                style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '6px 12px' }}
+                                                style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '6px 10px' }}
                                                 title="Mark as Not Spam (Move to Inbox)"
                                             >
                                                 <CheckCircle2 size={14} style={{ color: '#10b981' }} />
@@ -732,7 +895,7 @@ const EmailInbox = () => {
                                             <button 
                                                 onClick={() => handleRestore(selectedEmail._id)}
                                                 className="btn-secondary"
-                                                style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '6px 12px' }}
+                                                style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '6px 10px' }}
                                                 title="Restore email to Inbox"
                                             >
                                                 <RotateCcw size={14} style={{ color: '#38bdf8' }} />
@@ -742,18 +905,30 @@ const EmailInbox = () => {
                                             <button 
                                                 onClick={() => handleMarkSpam(selectedEmail._id)}
                                                 className="btn-secondary"
-                                                style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '6px 12px' }}
+                                                style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '6px 10px' }}
                                                 title="Move to Spam"
                                             >
                                                 <ShieldAlert size={14} style={{ color: '#f97316' }} />
-                                                <span>Report Spam</span>
+                                                <span>Spam</span>
                                             </button>
                                         )}
 
                                         {activeTab === 'trash' ? (
                                             <button 
                                                 onClick={() => handlePermanentDelete(selectedEmail._id)}
-                                                style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', cursor: 'pointer', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                                                style={{ 
+                                                    background: 'rgba(239, 68, 68, 0.12)', 
+                                                    border: '1px solid rgba(239, 68, 68, 0.3)', 
+                                                    color: '#ef4444', 
+                                                    cursor: 'pointer', 
+                                                    padding: '6px 10px', 
+                                                    borderRadius: '6px', 
+                                                    fontSize: '12px', 
+                                                    display: 'flex', 
+                                                    alignItems: 'center', 
+                                                    gap: '6px',
+                                                    fontWeight: 600
+                                                }}
                                                 title="Permanently Delete"
                                             >
                                                 <Trash2 size={14} />
@@ -762,36 +937,43 @@ const EmailInbox = () => {
                                         ) : (
                                             <button 
                                                 onClick={() => handleMoveToTrash(selectedEmail._id)}
-                                                style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', padding: '6px', borderRadius: '6px' }}
+                                                className="btn-secondary"
+                                                style={{ color: '#ef4444', padding: '6px 10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                                                 title="Move to Trash"
                                             >
-                                                <Trash2 size={16} />
+                                                <Trash2 size={14} />
                                             </button>
                                         )}
                                     </div>
                                 </div>
 
+                                {/* Sender Details Row */}
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                                     <div style={{
-                                        width: '40px',
-                                        height: '40px',
+                                        width: '42px',
+                                        height: '42px',
                                         borderRadius: '50%',
-                                        background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+                                        background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
                                         display: 'flex',
                                         alignItems: 'center',
                                         justifyContent: 'center',
-                                        color: '#fff',
+                                        color: '#ffffff',
                                         fontWeight: 700,
-                                        fontSize: '15px'
+                                        fontSize: '16px',
+                                        flexShrink: 0,
+                                        boxShadow: '0 2px 8px rgba(99, 102, 241, 0.3)'
                                     }}>
                                         {(selectedEmail.fromName || selectedEmail.from)[0].toUpperCase()}
                                     </div>
-                                    <div style={{ flexGrow: 1 }}>
-                                        <p style={{ margin: 0, fontWeight: 600, fontSize: '14px' }}>
-                                            {selectedEmail.fromName} <span style={{ color: 'var(--text-dim)', fontWeight: 400, fontSize: '13px' }}>&lt;{selectedEmail.from}&gt;</span>
+                                    <div style={{ flexGrow: 1, minWidth: 0 }}>
+                                        <p style={{ margin: 0, fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)' }}>
+                                            {selectedEmail.fromName || selectedEmail.from} 
+                                            <span style={{ color: 'var(--text-secondary)', fontWeight: 400, fontSize: '13px', marginLeft: '6px' }}>
+                                                &lt;{selectedEmail.from}&gt;
+                                            </span>
                                         </p>
-                                        <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                                            To: {selectedEmail.to} • {new Date(selectedEmail.createdAt).toLocaleString()}
+                                        <p style={{ margin: '3px 0 0 0', fontSize: '12px', color: 'var(--text-dim)' }}>
+                                            To: <span style={{ color: 'var(--text-secondary)' }}>{selectedEmail.to}</span> • {new Date(selectedEmail.createdAt).toLocaleString()}
                                         </p>
                                     </div>
 
@@ -805,7 +987,8 @@ const EmailInbox = () => {
                                             background: 'rgba(16, 185, 129, 0.1)',
                                             border: '1px solid rgba(16, 185, 129, 0.25)',
                                             fontSize: '12px',
-                                            color: '#10b981'
+                                            color: '#10b981',
+                                            flexShrink: 0
                                         }}>
                                             <CheckCircle2 size={14} />
                                             <span>Lead: <b>{selectedEmail.leadId.name}</b></span>
@@ -816,25 +999,26 @@ const EmailInbox = () => {
 
                             {/* OTP / Verification Code Banner (Google, etc.) */}
                             {selectedEmail.verificationCode && (
-                                <div style={{ 
-                                    margin: '16px 24px 0 24px', 
-                                    background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(16, 185, 129, 0.15))', 
-                                    border: '1px solid #6366f1', 
-                                    borderRadius: '12px', 
-                                    padding: '16px 20px', 
-                                    display: 'flex', 
-                                    alignItems: 'center', 
-                                    justifyContent: 'space-between' 
-                                }}>
+                                <div className="mail-otp-banner">
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                                        <div style={{ width: '42px', height: '42px', borderRadius: '50%', background: 'rgba(99, 102, 241, 0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a78bfa' }}>
+                                        <div style={{ 
+                                            width: '42px', 
+                                            height: '42px', 
+                                            borderRadius: '50%', 
+                                            background: 'rgba(99, 102, 241, 0.2)', 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            justifyContent: 'center', 
+                                            color: 'var(--accent-color)',
+                                            flexShrink: 0
+                                        }}>
                                             <Key size={22} />
                                         </div>
                                         <div>
-                                            <span style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 700, color: 'var(--accent-color)' }}>
+                                            <span style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 800, color: 'var(--accent-color)' }}>
                                                 Security Verification Code Detected
                                             </span>
-                                            <div style={{ fontSize: '26px', fontWeight: 900, letterSpacing: '4px', color: '#fff', fontFamily: 'monospace', marginTop: '2px' }}>
+                                            <div className="mail-otp-text">
                                                 {selectedEmail.verificationCode}
                                             </div>
                                         </div>
@@ -851,61 +1035,44 @@ const EmailInbox = () => {
                             )}
 
                             {/* Email HTML / Text Body */}
-                            <div style={{ flexGrow: 1, padding: '24px', overflowY: 'auto', background: 'rgba(0,0,0,0.1)' }}>
+                            <div className="mail-content-area">
                                 {selectedEmail.html ? (
                                     <div 
-                                        style={{
-                                            background: '#ffffff',
-                                            color: '#1f2937',
-                                            padding: '24px',
-                                            borderRadius: '12px',
-                                            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                                            lineHeight: 1.6,
-                                            fontSize: '14.5px',
-                                            overflowX: 'auto'
-                                        }}
+                                        className="mail-html-card"
                                         dangerouslySetInnerHTML={{ __html: selectedEmail.html }} 
                                     />
                                 ) : (
-                                    <div style={{
-                                        whiteSpace: 'pre-wrap',
-                                        fontSize: '14px',
-                                        lineHeight: 1.6,
-                                        color: 'var(--text-primary)',
-                                        background: 'rgba(255, 255, 255, 0.03)',
-                                        padding: '20px',
-                                        borderRadius: '10px'
-                                    }}>
-                                        {selectedEmail.text}
+                                    <div className="mail-plain-text">
+                                        {selectedEmail.text || '(Empty email content)'}
                                     </div>
                                 )}
                             </div>
 
                             {/* Quick Reply Box */}
-                            <div style={{ padding: '16px 24px', borderTop: '1px solid rgba(255, 255, 255, 0.08)', background: 'rgba(255, 255, 255, 0.02)' }}>
-                                <div style={{ display: 'flex', gap: '12px' }}>
+                            <div className="mail-reply-wrapper">
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                    <span>Reply to <strong style={{ color: 'var(--text-primary)' }}>{selectedEmail.from}</strong></span>
+                                    <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>Press Ctrl+Enter to send</span>
+                                </div>
+                                <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
                                     <textarea
                                         rows="2"
+                                        className="mail-reply-input"
                                         placeholder={`Reply to ${selectedEmail.from}...`}
                                         value={replyText}
                                         onChange={(e) => setReplyText(e.target.value)}
-                                        style={{
-                                            flexGrow: 1,
-                                            padding: '10px 14px',
-                                            background: 'rgba(255, 255, 255, 0.05)',
-                                            border: '1px solid rgba(255, 255, 255, 0.1)',
-                                            borderRadius: '8px',
-                                            color: 'var(--text-primary)',
-                                            fontSize: '13px',
-                                            resize: 'none',
-                                            outline: 'none'
+                                        onKeyDown={(e) => {
+                                            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                                                e.preventDefault();
+                                                handleSendReply();
+                                            }
                                         }}
                                     />
                                     <button
                                         onClick={handleSendReply}
                                         disabled={sendingReply || !replyText.trim()}
                                         className="btn-primary"
-                                        style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 20px', fontSize: '13px' }}
+                                        style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '10px 20px', fontSize: '13px', height: '42px', flexShrink: 0 }}
                                     >
                                         {sendingReply ? (
                                             <RefreshCw size={15} className="spin" />
@@ -920,97 +1087,143 @@ const EmailInbox = () => {
                             </div>
                         </div>
                     ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-dim)' }}>
-                            <Mail size={48} style={{ opacity: 0.2, marginBottom: '16px' }} />
-                            <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-secondary)' }}>No Email Selected</h3>
-                            <p style={{ fontSize: '13px', maxWidth: '300px', textAlign: 'center', marginTop: '6px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-dim)', padding: '40px' }}>
+                            <Mail size={52} style={{ opacity: 0.2, marginBottom: '16px' }} />
+                            <h3 style={{ fontSize: '17px', fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 6px 0' }}>No Email Selected</h3>
+                            <p style={{ fontSize: '13px', maxWidth: '320px', textAlign: 'center', margin: 0, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                                 Select an email from the left to read messages, verify codes, or reply directly.
                             </p>
                         </div>
                     )}
                 </div>
             </div>
+        </div>
 
-            {/* Compose Email Modal */}
-            {composeOpen && (
-                <div style={{
-                    position: 'fixed',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    background: 'rgba(0, 0, 0, 0.65)',
-                    backdropFilter: 'blur(6px)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    zIndex: 1000
-                }}>
-                    <div className="glass-panel animate-scale-up" style={{ width: '600px', padding: '28px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <Send size={18} style={{ color: 'var(--accent-color)' }} />
-                                <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 700, color: '#fff' }}>Compose Direct Email</h3>
+            {/* Compose Email Modal - Portaled to document.body */}
+            {composeOpen && createPortal(
+                <div className="modal-overlay" onClick={() => setComposeOpen(false)}>
+                    <div 
+                        className="modal-card animate-scale-up" 
+                        style={{ maxWidth: '640px', padding: 0, display: 'flex', flexDirection: 'column' }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        {/* Pinned Header */}
+                        <div className="modal-header-fixed">
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                    <div style={{
+                                        width: '36px',
+                                        height: '36px',
+                                        borderRadius: '10px',
+                                        background: 'rgba(124, 58, 237, 0.12)',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        color: 'var(--accent-color)'
+                                    }}>
+                                        <Send size={18} />
+                                    </div>
+                                    <div>
+                                        <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 700, color: 'var(--text-primary)' }}>Compose Direct Email</h3>
+                                        <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-secondary)' }}>Send an outreach email directly from your domain</p>
+                                    </div>
+                                </div>
+                                <button 
+                                    onClick={() => setComposeOpen(false)} 
+                                    style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', padding: '6px' }}
+                                >
+                                    <X size={18} />
+                                </button>
                             </div>
-                            <button onClick={() => setComposeOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer' }}>
-                                <X size={18} />
-                            </button>
                         </div>
 
-                        {myMailboxAddress && (
-                            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.03)', padding: '6px 12px', borderRadius: '6px' }}>
-                                Sending from: <strong style={{ color: '#a78bfa' }}>{myMailboxAddress}</strong>
+                        {/* Scrollable Form Body */}
+                        <div className="modal-body-scroll">
+                            {myMailboxAddress && (
+                                <div style={{ 
+                                    fontSize: '12.5px', 
+                                    color: 'var(--text-secondary)', 
+                                    background: 'var(--bg-secondary)', 
+                                    padding: '8px 14px', 
+                                    borderRadius: '8px',
+                                    border: '1px solid var(--border-color)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px'
+                                }}>
+                                    <span>Sending from:</span>
+                                    <strong style={{ color: 'var(--accent-color)', fontFamily: 'monospace' }}>{myMailboxAddress}</strong>
+                                </div>
+                            )}
+
+                            <div>
+                                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                    Recipient Email *
+                                </label>
+                                <input
+                                    type="email"
+                                    required
+                                    placeholder="client@company.com"
+                                    value={composeTo}
+                                    onChange={(e) => setComposeTo(e.target.value)}
+                                    className="form-input"
+                                />
                             </div>
-                        )}
 
-                        <div>
-                            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>Recipient Email</label>
-                            <input
-                                type="email"
-                                required
-                                placeholder="client@company.com"
-                                value={composeTo}
-                                onChange={(e) => setComposeTo(e.target.value)}
-                                className="form-input"
-                            />
+                            <div>
+                                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                    Subject *
+                                </label>
+                                <input
+                                    type="text"
+                                    required
+                                    placeholder="Meeting Follow-up / Project Proposal"
+                                    value={composeSubject}
+                                    onChange={(e) => setComposeSubject(e.target.value)}
+                                    className="form-input"
+                                />
+                            </div>
+
+                            <div>
+                                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                    Message Body *
+                                </label>
+                                <textarea
+                                    rows="7"
+                                    required
+                                    placeholder="Write your email here..."
+                                    value={composeBody}
+                                    onChange={(e) => setComposeBody(e.target.value)}
+                                    className="form-input"
+                                    style={{ resize: 'vertical', lineHeight: 1.6 }}
+                                />
+                            </div>
                         </div>
 
-                        <div>
-                            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>Subject</label>
-                            <input
-                                type="text"
-                                required
-                                placeholder="Meeting Follow-up / Project Proposal"
-                                value={composeSubject}
-                                onChange={(e) => setComposeSubject(e.target.value)}
-                                className="form-input"
-                            />
-                        </div>
-
-                        <div>
-                            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>Message Body</label>
-                            <textarea
-                                rows="6"
-                                required
-                                placeholder="Write your email here..."
-                                value={composeBody}
-                                onChange={(e) => setComposeBody(e.target.value)}
-                                className="form-input"
-                                style={{ resize: 'vertical' }}
-                            />
-                        </div>
-
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
-                            <button onClick={() => setComposeOpen(false)} className="btn-secondary" style={{ padding: '8px 16px', fontSize: '13px' }}>
+                        {/* Pinned Footer */}
+                        <div className="modal-footer-fixed">
+                            <button 
+                                type="button"
+                                onClick={() => setComposeOpen(false)} 
+                                className="btn-secondary" 
+                                style={{ padding: '9px 18px', fontSize: '13px' }}
+                            >
                                 Cancel
                             </button>
-                            <button onClick={handleSendCompose} disabled={sendingEmail} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 20px', fontSize: '13px' }}>
+                            <button 
+                                type="button"
+                                onClick={handleSendCompose} 
+                                disabled={sendingEmail} 
+                                className="btn-primary" 
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '9px 22px', fontSize: '13px' }}
+                            >
                                 {sendingEmail ? <RefreshCw size={15} className="spin" /> : <Send size={15} />}
                                 <span>{sendingEmail ? 'Dispatching...' : 'Send Email'}</span>
                             </button>
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
         </div>
     );

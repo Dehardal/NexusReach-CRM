@@ -3,13 +3,13 @@ const router = express.Router();
 const Campaign = require('../models/Campaign');
 const Mailbox = require('../models/Mailbox');
 const Lead = require('../models/Lead');
-const { protect } = require('../middleware/auth');
+const { protect, authorize } = require('../middleware/auth');
 const { sendCampaignBatch } = require('../services/campaignService');
 
 // @desc    Get all campaigns
 // @route   GET /api/campaigns
 // @access  Private
-router.get('/', protect, async (req, res) => {
+router.get('/', protect, authorize('master', 'admin', 'mail_pedia'), async (req, res) => {
     try {
         let filter = { createdBy: req.user._id };
         if (['master', 'admin'].includes(req.user.role)) {
@@ -30,7 +30,7 @@ router.get('/', protect, async (req, res) => {
 // @desc    Create & launch email marketing campaign
 // @route   POST /api/campaigns
 // @access  Private (Mail Pedia, Master, Admin)
-router.post('/', protect, async (req, res) => {
+router.post('/', protect, authorize('master', 'admin', 'mail_pedia'), async (req, res) => {
     try {
         const {
             name,
@@ -114,6 +114,27 @@ router.get('/:id', protect, async (req, res) => {
         }
 
         res.json(campaign);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// @desc    Delete campaign
+// @route   DELETE /api/campaigns/:id
+// @access  Private
+router.delete('/:id', protect, async (req, res) => {
+    try {
+        let filter = { _id: req.params.id };
+        if (!['master', 'admin'].includes(req.user.role)) {
+            filter.createdBy = req.user._id;
+        }
+
+        const campaign = await Campaign.findOneAndDelete(filter);
+        if (!campaign) {
+            return res.status(404).json({ message: 'Campaign not found or not authorized' });
+        }
+
+        res.json({ success: true, message: 'Campaign deleted successfully' });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }

@@ -137,6 +137,21 @@ export const AuthProvider = ({ children }) => {
         }
     };
 
+    const googleLogin = async (credentialOrPayload) => {
+        try {
+            const payload = typeof credentialOrPayload === 'string'
+                ? { credential: credentialOrPayload }
+                : credentialOrPayload;
+            const { data } = await api.post('/auth/google-login', payload);
+            setUser(data);
+            localStorage.setItem('crm_user', JSON.stringify(data));
+            return data;
+        } catch (err) {
+            console.error('[AUTH] Google login failure:', err.response?.data || err.message);
+            throw err;
+        }
+    };
+
     const logout = () => {
         setUser(null);
         localStorage.removeItem('crm_user');
@@ -172,6 +187,7 @@ export const AuthProvider = ({ children }) => {
             user,
             loading,
             login,
+            googleLogin,
             logout,
             registerSalesUser,
             getSalesUsers,

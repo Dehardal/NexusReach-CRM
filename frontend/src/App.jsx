@@ -1,6 +1,8 @@
+import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
+import { ThemeProvider, ThemeToggle } from './context/ThemeContext';
 import SalesLogin from './pages/SalesLogin';
 import Dashboard from './pages/Dashboard';
 import LeadsTable from './pages/LeadsTable';
@@ -11,11 +13,41 @@ import EmailSettings from './pages/EmailSettings';
 import EmailInbox from './pages/EmailInbox';
 import MailboxManager from './pages/MailboxManager';
 import CampaignManager from './pages/CampaignManager';
-import { LayoutDashboard, Users, UsersRound, MessageSquareCode, LogOut, MessageSquare, Mail, Inbox, Send, Server } from 'lucide-react';
+import LandingPage from './pages/LandingPage';
+import NotificationModal from './components/NotificationModal';
+import { LayoutDashboard, Users, UsersRound, MessageSquareCode, LogOut, MessageSquare, Mail, Inbox, Send, Server, Zap, Bell } from 'lucide-react';
 
 const Layout = ({ children }) => {
-    const { user, logout } = useAuth();
+    const { user, logout, socket, api } = useAuth();
     const location = useLocation();
+    const [notifOpen, setNotifOpen] = useState(false);
+    const [unreadNotifCount, setUnreadNotifCount] = useState(0);
+
+    // Initial unread notifications count fetch
+    useEffect(() => {
+        if (!user || !api) return;
+        const fetchInitialUnread = async () => {
+            try {
+                const { data } = await api.get('/notifications');
+                setUnreadNotifCount(data.unreadCount || 0);
+            } catch (e) {
+                // Silently handle if unauthenticated
+            }
+        };
+        fetchInitialUnread();
+    }, [user, api]);
+
+    // Real-time socket listener for incoming notifications
+    useEffect(() => {
+        if (!socket || !user) return;
+        const handleIncoming = (data) => {
+            if (data?.recipientId === user._id?.toString() || data?.recipientId === user.id?.toString()) {
+                setUnreadNotifCount(prev => prev + 1);
+            }
+        };
+        socket.on('new_notification', handleIncoming);
+        return () => socket.off('new_notification', handleIncoming);
+    }, [socket, user]);
 
     // Check if link is active
     const isActive = (path) => location.pathname === path;
@@ -30,8 +62,69 @@ const Layout = ({ children }) => {
         <div className="app-container">
             {/* Sidebar Navigation */}
             <aside className="sidebar" style={{ display: 'flex', flexDirection: 'column', overflowY: 'auto', overflowX: 'hidden' }}>
-                <div className="logo-section" style={{ flexShrink: 0 }}>
-                    <span className="logo-text">CRM V2</span>
+                <div className="logo-section" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{
+                            width: '28px',
+                            height: '28px',
+                            borderRadius: '8px',
+                            background: 'linear-gradient(135deg, #8b5cf6, #06b6d4)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0
+                        }}>
+                            <Zap size={16} color="#fff" />
+                        </div>
+                        <span className="logo-text">Nexus<span style={{ color: '#8b5cf6' }}>Reach</span></span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                        {/* Real-time Activity Notification Bell */}
+                        <button
+                            type="button"
+                            onClick={() => setNotifOpen(true)}
+                            style={{
+                                position: 'relative',
+                                background: unreadNotifCount > 0 ? 'rgba(139, 92, 246, 0.15)' : 'var(--bg-card)',
+                                border: `1px solid ${unreadNotifCount > 0 ? 'rgba(139, 92, 246, 0.4)' : 'var(--border-color)'}`,
+                                borderRadius: '8px',
+                                width: '32px',
+                                height: '32px',
+                                minWidth: '32px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: 'pointer',
+                                color: unreadNotifCount > 0 ? '#c4b5fd' : 'var(--text-secondary)',
+                                transition: 'all 0.2s ease'
+                            }}
+                            title="Activity Notifications"
+                        >
+                            <Bell size={16} />
+                            {unreadNotifCount > 0 && (
+                                <span style={{
+                                    position: 'absolute',
+                                    top: '-4px',
+                                    right: '-4px',
+                                    minWidth: '16px',
+                                    height: '16px',
+                                    borderRadius: '8px',
+                                    background: '#ef4444',
+                                    color: '#fff',
+                                    fontSize: '9.5px',
+                                    fontWeight: 700,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    padding: '0 4px',
+                                    boxShadow: '0 0 8px rgba(239, 68, 68, 0.6)'
+                                }}>
+                                    {unreadNotifCount > 9 ? '9+' : unreadNotifCount}
+                                </span>
+                            )}
+                        </button>
+                        <ThemeToggle style={{ width: '32px', height: '32px', minWidth: '32px', padding: 0 }} />
+                    </div>
                 </div>
                 
                 <ul className="nav-links" style={{ flexGrow: 1 }}>
@@ -172,9 +265,16 @@ const Layout = ({ children }) => {
             </aside>
 
             {/* Main Application Page Canvas */}
-            <main className="main-canvas">
+            <main className={`main-canvas ${['/email-inbox', '/whatsapp-inbox'].includes(location.pathname) ? 'main-canvas-fullbleed' : ''}`}>
                 {children}
             </main>
+
+            {/* Real-time Activity Notification Modal Box */}
+            <NotificationModal 
+                isOpen={notifOpen} 
+                onClose={() => setNotifOpen(false)} 
+                onUnreadCountChange={setUnreadNotifCount} 
+            />
         </div>
     );
 };
@@ -193,7 +293,8 @@ const AppContent = () => {
 
     return (
         <Routes>
-            {/* Public Login Route */}
+            {/* Public Landing & Login Routes */}
+            <Route path="/" element={<LandingPage />} />
             <Route path="/login" element={user ? <Navigate to="/dashboard" replace /> : <SalesLogin />} />
 
             {/* Protected Routes */}
@@ -208,20 +309,22 @@ const AppContent = () => {
             <Route path="/campaigns" element={<ProtectedRoute><CampaignManager /></ProtectedRoute>} />
 
             {/* Fallbacks */}
-            <Route path="*" element={<Navigate to={user ? "/dashboard" : "/login"} replace />} />
+            <Route path="*" element={<Navigate to={user ? "/dashboard" : "/"} replace />} />
         </Routes>
     );
 };
 
 const App = () => {
     return (
-        <ToastProvider>
-            <AuthProvider>
-                <BrowserRouter>
-                    <AppContent />
-                </BrowserRouter>
-            </AuthProvider>
-        </ToastProvider>
+        <ThemeProvider>
+            <ToastProvider>
+                <AuthProvider>
+                    <BrowserRouter>
+                        <AppContent />
+                    </BrowserRouter>
+                </AuthProvider>
+            </ToastProvider>
+        </ThemeProvider>
     );
 };
 

@@ -7,6 +7,8 @@ const { protect, authorize } = require('../middleware/auth');
 
 const EmailSettings = require('../models/EmailSettings');
 const { encrypt } = require('../utils/crypto');
+const axios = require('axios');
+const crypto = require('crypto');
 
 // Generate JWT token
 const generateToken = (id) => {
@@ -141,10 +143,105 @@ router.post('/login', async (req, res) => {
             email: user.email,
             role: user.role,
             designation: user.designation,
+            avatar: user.avatar,
             token: generateToken(user._id)
         });
     } catch (error) {
         res.status(500).json({ message: error.message });
+    }
+});
+
+// @desc    Authenticate user via Google Sign-In (GIS Token)
+// @route   POST /api/auth/google-login
+// @access  Public
+router.post('/google-login', async (req, res) => {
+    const { credential, email: devEmail, name: devName } = req.body;
+
+    try {
+        let googleEmail, googleName, googlePicture, googleSub;
+
+        if (credential) {
+            // Verify with Google's official tokeninfo endpoint
+            const googleRes = await axios.get(`https://oauth2.googleapis.com/tokeninfo?id_token=${credential}`);
+            const payload = googleRes.data;
+
+            if (!payload || !payload.email) {
+                return res.status(400).json({ message: 'Invalid Google authentication token' });
+            }
+
+            googleEmail = payload.email.trim().toLowerCase();
+            googleName = payload.name || payload.email.split('@')[0];
+            googlePicture = payload.picture || '';
+            googleSub = payload.sub || '';
+        } else if (process.env.NODE_ENV === 'development' && devEmail) {
+            // Development fallback for quick testing
+            googleEmail = devEmail.trim().toLowerCase();
+            googleName = devName || googleEmail.split('@')[0];
+            googlePicture = '';
+            googleSub = 'dev-sub-' + Date.now();
+        } else {
+            return res.status(400).json({ message: 'Google credential token is required' });
+        }
+
+        // Determine if user should be Master Architect
+        const masterEmails = [
+            (process.env.MASTER_EMAIL || '').toLowerCase().trim()
+        ].filter(Boolean);
+
+        const isMasterAccount = masterEmails.includes(googleEmail);
+
+        // Find existing user by email
+        let user = await User.findOne({ email: googleEmail });
+
+        if (user) {
+            let changed = false;
+            if (isMasterAccount && user.role !== 'master') {
+                user.role = 'master';
+                changed = true;
+            }
+            if (googleSub && !user.googleId) {
+                user.googleId = googleSub;
+                changed = true;
+            }
+            if (googlePicture && !user.avatar) {
+                user.avatar = googlePicture;
+                changed = true;
+            }
+            if (changed) {
+                await user.save();
+            }
+        } else {
+            // First registered user or designated master email gets Master role
+            const userCount = await User.countDocuments();
+            const role = (isMasterAccount || userCount === 0) ? 'master' : 'admin';
+            const randomPassword = crypto.randomBytes(24).toString('hex');
+
+            user = await User.create({
+                name: googleName,
+                email: googleEmail,
+                password: randomPassword,
+                role: role,
+                designation: role === 'master' ? 'Architect' : 'Administrator',
+                googleId: googleSub,
+                avatar: googlePicture
+            });
+        }
+
+        res.json({
+            _id: user._id,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            designation: user.designation,
+            avatar: user.avatar,
+            token: generateToken(user._id)
+        });
+
+    } catch (error) {
+        console.error('[GOOGLE AUTH ERROR]:', error.response?.data || error.message);
+        res.status(401).json({ 
+            message: error.response?.data?.error_description || error.message || 'Google authentication failed' 
+        });
     }
 });
 
@@ -215,7 +312,26 @@ router.get('/admins', protect, authorize('master', 'admin'), async (req, res) =>
 // @access  Private/Master, Admin
 router.get('/users-list', protect, authorize('master', 'admin'), async (req, res) => {
     try {
-        const users = await User.find({}, '_id name email role designation').sort({ name: 1 });
+        let filter = {};
+
+        // If queried for mailbox assignment or by default in mailbox context:
+        // 1. Sales ('sales') can NEVER have mailboxes assigned to them anywhere on the CRM
+        // 2. On Admin panel: Admins can ONLY assign to 'mail_pedia'
+        // 3. Master can assign to 'admin' and 'mail_pedia'
+        if (req.query.forMailbox === 'true' || req.query.context === 'mailboxes') {
+            if (req.user.role === 'admin') {
+                filter = { role: 'mail_pedia' };
+            } else if (req.user.role === 'master') {
+                filter = { role: { $in: ['admin', 'mail_pedia'] } };
+            }
+        } else {
+            // If requester is admin, they manage mail_pedia & sales under their wing
+            if (req.user.role === 'admin') {
+                filter = { role: { $in: ['mail_pedia', 'sales'] } };
+            }
+        }
+
+        const users = await User.find(filter, '_id name email role designation').sort({ name: 1 });
         res.json(users);
     } catch (error) {
         res.status(500).json({ message: error.message });

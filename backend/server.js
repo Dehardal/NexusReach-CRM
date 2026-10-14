@@ -41,6 +41,7 @@ app.use('/api/email-settings', require('./routes/emailSettings'));
 app.use('/api/mailboxes', require('./routes/mailboxes'));
 app.use('/api/campaigns', require('./routes/campaigns'));
 app.use('/api/scraper', require('./routes/scraper'));
+app.use('/api/notifications', require('./routes/notifications').router);
 
 // Serve React Frontend Production Build
 const frontendDistPath = path.join(__dirname, '../frontend/dist');

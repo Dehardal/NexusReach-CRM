@@ -38,7 +38,22 @@ class HostingerMailService {
             };
         } catch (error) {
             console.error('[HOSTINGER API ERROR]', error.response?.data || error.message);
-            const errMsg = error.response?.data?.error || error.response?.data?.message || error.message;
+            let errMsg = 'Connection failed';
+            if (error.response?.data) {
+                const d = error.response.data;
+                if (typeof d === 'string') errMsg = d;
+                else if (typeof d.message === 'string') errMsg = d.message;
+                else if (typeof d.error === 'string') errMsg = d.error;
+                else if (typeof d.error?.message === 'string') errMsg = d.error.message;
+                else errMsg = JSON.stringify(d);
+            } else if (error.message) {
+                errMsg = error.message;
+            }
+            if (error.response?.status === 401) {
+                errMsg = `Hostinger rejected token (401 Unauthorized): ${errMsg}. Please verify your Hostinger API Bearer Token in hPanel.`;
+            } else if (error.response?.status === 404) {
+                errMsg = `Hostinger endpoint 404 Not Found: ${errMsg}`;
+            }
             throw new Error(errMsg);
         }
     }

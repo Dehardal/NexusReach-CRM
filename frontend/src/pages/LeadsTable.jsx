@@ -2,9 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { 
-    Search, Plus, Upload, Sparkles, MessageSquare, Mail, 
+    Search, Plus, Upload, Sparkles, Zap, MessageSquare, Mail, 
     Calendar, User, PlusCircle, CheckCircle, X, ChevronRight, Send, RefreshCw, PhoneCall, Trash2 
 } from 'lucide-react';
+import CustomDropdown from '../components/CustomDropdown';
 
 const LeadsTable = () => {
     const { api, whatsAppStatus, user, socket, getAdmins } = useAuth();
@@ -738,25 +739,39 @@ const LeadsTable = () => {
         <>
             <div className="animate-fade-in">
             {/* Header controls */}
-            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+            <header style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center', 
+                flexWrap: 'wrap',
+                gap: '16px',
+                marginBottom: '24px' 
+            }}>
                 <div>
-                    <h1 style={{ fontSize: '36px', fontWeight: 800, marginBottom: '6px' }}>Leads Workspace</h1>
-                    <p style={{ color: 'var(--text-secondary)' }}>Organize, bulk assign, analyze, and convert prospect catalogs</p>
+                    <h1 style={{ fontSize: '28px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.02em' }}>Leads Workspace</h1>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '13.5px' }}>Organize, bulk assign, analyze, and convert prospect catalogs</p>
                 </div>
-                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                     <button 
                         onClick={() => setHotQueueOnly(!hotQueueOnly)} 
                         className="btn-secondary" 
                         style={{ 
-                            display: 'flex', 
+                            display: 'inline-flex', 
                             alignItems: 'center', 
-                            gap: '8px', 
+                            gap: '6px', 
+                            padding: '8px 12px',
+                            fontSize: '12.5px',
+                            fontWeight: 600,
+                            borderRadius: '8px',
                             color: hotQueueOnly ? '#ef4444' : '#f97316', 
                             borderColor: hotQueueOnly ? '#ef4444' : 'rgba(249, 115, 22, 0.4)',
                             background: hotQueueOnly ? 'rgba(239, 68, 68, 0.15)' : 'rgba(249, 115, 22, 0.08)'
                         }}
+                        title={hotQueueOnly ? 'Showing only hot leads' : 'Filter hot leads queue'}
                     >
-                        <span>🔥 {hotQueueOnly ? 'Showing Hot Leads' : 'Hot Leads Queue'}</span>
+                        <span>🔥</span>
+                        <span>{hotQueueOnly ? 'Showing Hot' : 'Hot Queue'}</span>
                     </button>
 
                     {['master', 'admin'].includes(user?.role) && (
@@ -768,33 +783,90 @@ const LeadsTable = () => {
                                 setSplitModalOpen(true);
                             }} 
                             className="btn-secondary" 
-                            style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#06b6d4', borderColor: 'rgba(6, 182, 212, 0.4)', background: 'rgba(6, 182, 212, 0.08)' }}
+                            style={{ 
+                                display: 'inline-flex', 
+                                alignItems: 'center', 
+                                gap: '6px', 
+                                padding: '8px 12px',
+                                fontSize: '12.5px',
+                                fontWeight: 600,
+                                borderRadius: '8px',
+                                color: '#06b6d4', 
+                                borderColor: 'rgba(6, 182, 212, 0.4)', 
+                                background: 'rgba(6, 182, 212, 0.08)' 
+                            }}
+                            title="Split database into batches (e.g. 5,000) and allocate to members"
                         >
-                            <span>⚡ Chunk Allocation (e.g. 5,000)</span>
+                            <Zap size={14} />
+                            <span>Chunk Allocate</span>
                         </button>
                     )}
 
-                    <button onClick={() => setScraperModalOpen(true)} className="btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#a78bfa', borderColor: 'rgba(167, 139, 250, 0.35)' }}>
-                        <Sparkles size={16} />
-                        <span>🕷️ Scraper</span>
+                    <button 
+                        onClick={() => setScraperModalOpen(true)} 
+                        className="btn-secondary" 
+                        style={{ 
+                            display: 'inline-flex', 
+                            alignItems: 'center', 
+                            gap: '6px', 
+                            padding: '8px 12px',
+                            fontSize: '12.5px',
+                            fontWeight: 600,
+                            borderRadius: '8px',
+                            color: '#a78bfa', 
+                            borderColor: 'rgba(167, 139, 250, 0.35)',
+                            background: 'rgba(167, 139, 250, 0.08)'
+                        }}
+                        title="B2B Directory & Maps Scraper"
+                    >
+                        <Sparkles size={14} />
+                        <span>Scraper</span>
                     </button>
-                    <button onClick={() => setImportModalOpen(true)} className="btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <Upload size={16} />
+
+                    <button 
+                        onClick={() => setImportModalOpen(true)} 
+                        className="btn-secondary" 
+                        style={{ 
+                            display: 'inline-flex', 
+                            alignItems: 'center', 
+                            gap: '6px', 
+                            padding: '8px 12px',
+                            fontSize: '12.5px',
+                            fontWeight: 600,
+                            borderRadius: '8px'
+                        }}
+                        title="Import Leads from CSV/Excel"
+                    >
+                        <Upload size={14} />
                         <span>Import</span>
                     </button>
-                    <button onClick={() => {
-                        setCreateModalOpen(true);
-                        setLeadName('');
-                        setLeadEmail('');
-                        setLeadPhone('');
-                        setLeadCourse('');
-                        setLeadProfession('');
-                        setLeadCity('');
-                        setLeadState('');
-                        setLeadSource('Direct');
-                        setLeadStatus('New');
-                    }} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <Plus size={18} />
+
+                    <button 
+                        onClick={() => {
+                            setCreateModalOpen(true);
+                            setLeadName('');
+                            setLeadEmail('');
+                            setLeadPhone('');
+                            setLeadCourse('');
+                            setLeadProfession('');
+                            setLeadCity('');
+                            setLeadState('');
+                            setLeadSource('Direct');
+                            setLeadStatus('New');
+                        }} 
+                        className="btn-primary" 
+                        style={{ 
+                            display: 'inline-flex', 
+                            alignItems: 'center', 
+                            gap: '6px', 
+                            padding: '8px 14px',
+                            fontSize: '12.5px',
+                            fontWeight: 600,
+                            borderRadius: '8px',
+                            boxShadow: '0 2px 10px rgba(139, 92, 246, 0.3)'
+                        }}
+                    >
+                        <Plus size={15} />
                         <span>Add Lead</span>
                     </button>
                 </div>
@@ -842,7 +914,7 @@ const LeadsTable = () => {
             )}
 
             {/* Filters panel */}
-            <div className="glass-panel" style={{ padding: '20px', marginBottom: '32px' }}>
+            <div className="glass-panel" style={{ padding: '16px 20px', marginBottom: '24px', position: 'relative', zIndex: 40 }}>
                 <form onSubmit={handleSearchSubmit} style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'center' }}>
                     <div style={{ position: 'relative', flexGrow: 1, minWidth: '240px' }}>
                         <Search size={16} style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)' }} />
@@ -856,38 +928,47 @@ const LeadsTable = () => {
                         />
                     </div>
 
-                    <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                        <div>
-                            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="form-input" style={{ width: '140px' }}>
-                                <option value="All">All Statuses</option>
-                                <option value="New">New</option>
-                                <option value="Contacted">Contacted</option>
-                                <option value="Follow-up">Follow-up</option>
-                                <option value="Won">Won</option>
-                                <option value="Lost">Lost</option>
-                                <option value="Hot">Hot</option>
-                            </select>
-                        </div>
+                    <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+                        <CustomDropdown
+                            value={statusFilter}
+                            onChange={val => setStatusFilter(val)}
+                            options={[
+                                { value: 'All', label: 'All Statuses' },
+                                { value: 'New', label: 'New' },
+                                { value: 'Contacted', label: 'Contacted' },
+                                { value: 'Follow-up', label: 'Follow-up' },
+                                { value: 'Won', label: 'Won' },
+                                { value: 'Lost', label: 'Lost' },
+                                { value: 'Hot', label: 'Hot', icon: '🔥' }
+                            ]}
+                            width="160px"
+                        />
 
-                        <div>
-                            <select value={aiFilter} onChange={e => setAiFilter(e.target.value)} className="form-input" style={{ width: '130px' }}>
-                                <option value="All">All AI Scores</option>
-                                <option value="Hot">🔥 Hot</option>
-                                <option value="Warm">⚡ Warm</option>
-                                <option value="Cold">❄️ Cold</option>
-                            </select>
-                        </div>
+                        <CustomDropdown
+                            value={aiFilter}
+                            onChange={val => setAiFilter(val)}
+                            options={[
+                                { value: 'All', label: 'All AI Scores' },
+                                { value: 'Hot', label: 'Hot', icon: '🔥' },
+                                { value: 'Warm', label: 'Warm', icon: '⚡' },
+                                { value: 'Cold', label: 'Cold', icon: '❄️' }
+                            ]}
+                            width="160px"
+                        />
 
-                        <div>
-                            <select value={campaignStatusFilter} onChange={e => setCampaignStatusFilter(e.target.value)} className="form-input" style={{ width: '150px' }}>
-                                <option value="All">All Outreach</option>
-                                <option value="uncontacted">Uncontacted</option>
-                                <option value="sent">Campaign Sent</option>
-                                <option value="replied">🔥 Replied</option>
-                            </select>
-                        </div>
+                        <CustomDropdown
+                            value={campaignStatusFilter}
+                            onChange={val => setCampaignStatusFilter(val)}
+                            options={[
+                                { value: 'All', label: 'All Outreach' },
+                                { value: 'uncontacted', label: 'Uncontacted' },
+                                { value: 'sent', label: 'Campaign Sent' },
+                                { value: 'replied', label: 'Replied', icon: '🔥' }
+                            ]}
+                            width="170px"
+                        />
 
-                        <button type="submit" className="btn-primary" style={{ padding: '12px 20px' }}>
+                        <button type="submit" className="btn-primary" style={{ padding: '10px 20px', borderRadius: '10px' }}>
                             Apply
                         </button>
                     </div>
@@ -1534,23 +1615,31 @@ const LeadsTable = () => {
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                                 <div>
                                     <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>Assign Representative</label>
-                                    <select value={assignedTo} onChange={e => setAssignedTo(e.target.value)} className="form-input">
-                                        <option value="">-- Select Unassigned --</option>
-                                        {repsList.map(r => (
-                                            <option key={r._id} value={r._id}>{r.name} ({r.role})</option>
-                                        ))}
-                                    </select>
+                                    <CustomDropdown 
+                                        value={assignedTo} 
+                                        onChange={val => setAssignedTo(val)} 
+                                        options={[
+                                            { value: '', label: '-- Select Unassigned --' },
+                                            ...repsList.map(r => ({ value: r._id, label: `${r.name} (${r.role})` }))
+                                        ]}
+                                        width="100%"
+                                    />
                                 </div>
                                 <div>
                                     <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>Initial Status</label>
-                                    <select value={leadStatus} onChange={e => setLeadStatus(e.target.value)} className="form-input">
-                                        <option value="New">New</option>
-                                        <option value="Contacted">Contacted</option>
-                                        <option value="Follow-up">Follow-up</option>
-                                        <option value="Won">Won</option>
-                                        <option value="Lost">Lost</option>
-                                        <option value="Hot">Hot</option>
-                                    </select>
+                                    <CustomDropdown 
+                                        value={leadStatus} 
+                                        onChange={val => setLeadStatus(val)} 
+                                        options={[
+                                            { value: 'New', label: 'New' },
+                                            { value: 'Contacted', label: 'Contacted' },
+                                            { value: 'Follow-up', label: 'Follow-up' },
+                                            { value: 'Won', label: 'Won' },
+                                            { value: 'Lost', label: 'Lost' },
+                                            { value: 'Hot', label: 'Hot', icon: '🔥' }
+                                        ]}
+                                        width="100%"
+                                    />
                                 </div>
                             </div>
 
@@ -1593,12 +1682,15 @@ const LeadsTable = () => {
                                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
                                     Batch Assign to Representative
                                 </label>
-                                <select value={assignedTo} onChange={e => setAssignedTo(e.target.value)} className="form-input">
-                                    <option value="">-- Keep Unassigned --</option>
-                                    {repsList.map(r => (
-                                        <option key={r._id} value={r._id}>{r.name} ({r.role})</option>
-                                    ))}
-                                </select>
+                                <CustomDropdown 
+                                    value={assignedTo} 
+                                    onChange={val => setAssignedTo(val)} 
+                                    options={[
+                                        { value: '', label: '-- Keep Unassigned --' },
+                                        ...repsList.map(r => ({ value: r._id, label: `${r.name} (${r.role})` }))
+                                    ]}
+                                    width="100%"
+                                />
                             </div>
 
                             {importStatus && (
@@ -1948,14 +2040,19 @@ const LeadsTable = () => {
                                         <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
                                             Directory Engine
                                         </label>
-                                        <select value={directorySource} onChange={e => setDirectorySource(e.target.value)} className="form-input">
-                                            <option value="all">🌐 All Directories</option>
-                                            <option value="google">📍 Google Maps / Places</option>
-                                            <option value="indiamart">🏢 IndiaMART B2B</option>
-                                            <option value="justdial">📞 JustDial Listings</option>
-                                            <option value="yellowpages">📘 YellowPages</option>
-                                            <option value="bing">💼 Bing Corporate</option>
-                                        </select>
+                                        <CustomDropdown
+                                            value={directorySource}
+                                            onChange={val => setDirectorySource(val)}
+                                            options={[
+                                                { value: 'all', label: 'All Directories', icon: '🌐' },
+                                                { value: 'google', label: 'Google Maps / Places', icon: '📍' },
+                                                { value: 'indiamart', label: 'IndiaMART B2B', icon: '🏢' },
+                                                { value: 'justdial', label: 'JustDial Listings', icon: '📞' },
+                                                { value: 'yellowpages', label: 'YellowPages', icon: '📘' },
+                                                { value: 'bing', label: 'Bing Corporate', icon: '💼' }
+                                            ]}
+                                            width="100%"
+                                        />
                                     </div>
                                 </div>
                             )}
@@ -2135,37 +2232,37 @@ const LeadsTable = () => {
                                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '5px' }}>
                                     Assign Directly To Member
                                 </label>
-                                <select 
-                                    required 
+                                <CustomDropdown 
                                     value={splitAssignedTo} 
-                                    onChange={e => setSplitAssignedTo(e.target.value)} 
-                                    className="form-input"
-                                >
-                                    <option value="">-- Select Member --</option>
-                                    {repsList.map(rep => (
-                                        <option key={rep._id} value={rep._id}>
-                                            {rep.role === 'mail_pedia' ? '📨' : '💼'} {rep.name} ({rep.role === 'mail_pedia' ? 'Mail Pedia' : rep.role})
-                                        </option>
-                                    ))}
-                                </select>
+                                    onChange={val => setSplitAssignedTo(val)} 
+                                    placeholder="-- Select Member --"
+                                    options={[
+                                        { value: '', label: '-- Select Member --' },
+                                        ...repsList.map(rep => ({
+                                            value: rep._id,
+                                            label: `${rep.role === 'mail_pedia' ? '📨' : '💼'} ${rep.name} (${rep.role === 'mail_pedia' ? 'Mail Pedia' : rep.role})`
+                                        }))
+                                    ]}
+                                    width="100%"
+                                />
                             </div>
 
                             <div>
                                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '5px' }}>
                                     Supervising Admin (Gets Hot Lead Notifications)
                                 </label>
-                                <select 
+                                <CustomDropdown 
                                     value={splitAssignedAdmin} 
-                                    onChange={e => setSplitAssignedAdmin(e.target.value)} 
-                                    className="form-input"
-                                >
-                                    <option value="">-- Direct under Master --</option>
-                                    {adminList.map(adm => (
-                                        <option key={adm._id} value={adm._id}>
-                                            🛡️ {adm.name} ({adm.email})
-                                        </option>
-                                    ))}
-                                </select>
+                                    onChange={val => setSplitAssignedAdmin(val)} 
+                                    options={[
+                                        { value: '', label: '-- Direct under Master --' },
+                                        ...adminList.map(adm => ({
+                                            value: adm._id,
+                                            label: `🛡️ ${adm.name} (${adm.email})`
+                                        }))
+                                    ]}
+                                    width="100%"
+                                />
                             </div>
 
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
@@ -2200,35 +2297,35 @@ const LeadsTable = () => {
                         <form onSubmit={handleBulkAssign} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                             <div>
                                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '5px' }}>Assignee</label>
-                                <select 
-                                    required 
+                                <CustomDropdown 
                                     value={bulkTargetUser} 
-                                    onChange={e => setBulkTargetUser(e.target.value)} 
-                                    className="form-input"
-                                >
-                                    <option value="">-- Choose Member --</option>
-                                    {repsList.map(rep => (
-                                        <option key={rep._id} value={rep._id}>
-                                            {rep.role === 'mail_pedia' ? '📨' : '💼'} {rep.name} ({rep.role === 'mail_pedia' ? 'Mail Pedia' : rep.role})
-                                        </option>
-                                    ))}
-                                </select>
+                                    onChange={val => setBulkTargetUser(val)} 
+                                    placeholder="-- Choose Member --"
+                                    options={[
+                                        { value: '', label: '-- Choose Member --' },
+                                        ...repsList.map(rep => ({
+                                            value: rep._id,
+                                            label: `${rep.role === 'mail_pedia' ? '📨' : '💼'} ${rep.name} (${rep.role === 'mail_pedia' ? 'Mail Pedia' : rep.role})`
+                                        }))
+                                    ]}
+                                    width="100%"
+                                />
                             </div>
 
                             <div>
                                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '5px' }}>Supervising Admin</label>
-                                <select 
+                                <CustomDropdown 
                                     value={bulkTargetAdmin} 
-                                    onChange={e => setBulkTargetAdmin(e.target.value)} 
-                                    className="form-input"
-                                >
-                                    <option value="">-- Default / Direct under Master --</option>
-                                    {adminList.map(adm => (
-                                        <option key={adm._id} value={adm._id}>
-                                            🛡️ {adm.name} ({adm.email})
-                                        </option>
-                                    ))}
-                                </select>
+                                    onChange={val => setBulkTargetAdmin(val)} 
+                                    options={[
+                                        { value: '', label: '-- Default / Direct under Master --' },
+                                        ...adminList.map(adm => ({
+                                            value: adm._id,
+                                            label: `🛡️ ${adm.name} (${adm.email})`
+                                        }))
+                                    ]}
+                                    width="100%"
+                                />
                             </div>
 
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
@@ -2263,7 +2360,7 @@ const LeadsTable = () => {
                         {/* Lead Snapshot */}
                         <div style={{ background: 'rgba(249, 115, 22, 0.08)', border: '1px solid rgba(249, 115, 22, 0.25)', borderRadius: '10px', padding: '14px', marginBottom: '16px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                                <span style={{ fontWeight: 700, fontSize: '15px', color: '#fff' }}>{leadToTransfer.name}</span>
+                                <span style={{ fontWeight: 700, fontSize: '15px', color: 'var(--text-primary)' }}>{leadToTransfer.name}</span>
                                 <span style={{ fontSize: '11px', background: '#ef4444', color: '#fff', padding: '2px 8px', borderRadius: '10px', fontWeight: 700 }}>
                                     🔥 HOT RESPONDED
                                 </span>
@@ -2281,28 +2378,25 @@ const LeadsTable = () => {
                                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '5px' }}>
                                     Transfer To Sales Counselor or Admin
                                 </label>
-                                <select 
-                                    required 
+                                <CustomDropdown 
                                     value={transferToId} 
-                                    onChange={e => setTransferToId(e.target.value)} 
-                                    className="form-input"
-                                >
-                                    <option value="">-- Select Closer --</option>
-                                    <optgroup label="Sales Counselors">
-                                        {repsList.filter(r => r.role === 'sales').map(r => (
-                                            <option key={r._id} value={r._id}>
-                                                💼 {r.name} ({r.email}) - {r.designation || 'Sales Rep'}
-                                            </option>
-                                        ))}
-                                    </optgroup>
-                                    <optgroup label="Administrators">
-                                        {adminList.map(a => (
-                                            <option key={a._id} value={a._id}>
-                                                🛡️ {a.name} ({a.email}) - {a.role}
-                                            </option>
-                                        ))}
-                                    </optgroup>
-                                </select>
+                                    onChange={val => setTransferToId(val)} 
+                                    placeholder="-- Select Closer --"
+                                    options={[
+                                        { value: '', label: '-- Select Closer --' },
+                                        ...repsList.filter(r => r.role === 'sales').map(r => ({
+                                            value: r._id,
+                                            label: `${r.name} (${r.email}) - ${r.designation || 'Sales Rep'}`,
+                                            icon: '💼'
+                                        })),
+                                        ...adminList.map(a => ({
+                                            value: a._id,
+                                            label: `${a.name} (${a.email}) - ${a.role}`,
+                                            icon: '🛡️'
+                                        }))
+                                    ]}
+                                    width="100%"
+                                />
                             </div>
 
                             <div>

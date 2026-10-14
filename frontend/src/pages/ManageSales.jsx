@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Shield, Plus, Edit2, Trash2, X, Check, Eye, EyeOff, Mail, CheckCircle2, AlertCircle } from 'lucide-react';
+import CustomDropdown from '../components/CustomDropdown';
 
 const ManageSales = () => {
     const { getSalesUsers, registerSalesUser, updateSalesUser, deleteSalesUser, getAdmins, user } = useAuth();
@@ -310,12 +311,17 @@ const ManageSales = () => {
                                 </div>
                                 <div>
                                     <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>System Role</label>
-                                    <select value={role} onChange={e => setRole(e.target.value)} className="form-input">
-                                        <option value="sales">Sales Counselor</option>
-                                        <option value="mail_pedia">Mail Pedia (Email Marketing)</option>
-                                        <option value="admin">Administrator</option>
-                                        <option value="manager">Manager</option>
-                                    </select>
+                                    <CustomDropdown
+                                        value={role}
+                                        onChange={val => setRole(val)}
+                                        options={[
+                                            { value: 'sales', label: 'Sales Counselor', icon: '💼' },
+                                            { value: 'mail_pedia', label: 'Mail Pedia (Email Marketing)', icon: '📨' },
+                                            { value: 'admin', label: 'Administrator', icon: '🛡️' },
+                                            { value: 'manager', label: 'Manager', icon: '👑' }
+                                        ]}
+                                        width="100%"
+                                    />
                                 </div>
                             </div>
 
@@ -325,18 +331,19 @@ const ManageSales = () => {
                                     <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
                                         Supervising Admin (Reports To)
                                     </label>
-                                    <select 
+                                    <CustomDropdown 
                                         value={assignedAdmin} 
-                                        onChange={e => setAssignedAdmin(e.target.value)} 
-                                        className="form-input"
-                                    >
-                                        <option value="">-- Direct to Master / Organization --</option>
-                                        {admins.map(adm => (
-                                            <option key={adm._id} value={adm._id}>
-                                                🛡️ {adm.name} ({adm.email}) - {adm.role}
-                                            </option>
-                                        ))}
-                                    </select>
+                                        onChange={val => setAssignedAdmin(val)}
+                                        options={[
+                                            { value: '', label: '-- Direct to Master / Organization --' },
+                                            ...admins.map(adm => ({
+                                                value: adm._id,
+                                                label: `${adm.name} (${adm.email}) - ${adm.role}`,
+                                                icon: '🛡️'
+                                            }))
+                                        ]}
+                                        width="100%"
+                                    />
                                     <p style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '4px' }}>
                                         When leads respond as Hot Leads, this Admin and Master receive immediate notification alerts.
                                     </p>

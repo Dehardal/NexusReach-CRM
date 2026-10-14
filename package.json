@@ -1,7 +1,7 @@
 {
-  "name": "pulse-crm",
+  "name": "nexusreach-crm",
   "version": "1.0.0",
-  "description": "Full-stack Open Source CRM & Multi-Provider Outreach Platform with Real-Time Communication, AI Lead Scoring, and Campaign Rotation",
+  "description": "Open-Source Multichannel CRM & High-Volume Outreach Engine with Multi-Provider Mailbox Rotation, Hostinger API, and WhatsApp Automation",
   "scripts": {
     "dev": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
     "dev:backend": "npm run dev --prefix backend",

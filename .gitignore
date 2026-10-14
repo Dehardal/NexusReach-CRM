@@ -20,6 +20,7 @@ dist/
 build/
 frontend/dist/
 *.tsbuildinfo
+docker-compose.yml
 
 # Binaries and Large Executables
 *.exe
@@ -49,6 +50,9 @@ backend/.wwebjs_cache/
 *.csv
 hostinger_accounts_to_create.*
 hostinger_f12_auto_creator.js
+cloudflare_f12_auto_creator.js
+gmail_smtp_alias_f12_creator.js
+*_f12_*.js
 
 # Internal Scratch and Test Dumps
 scratch/

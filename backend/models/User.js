@@ -33,6 +33,14 @@ const userSchema = new mongoose.Schema({
     assignedAdmin: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'
+    },
+    googleId: {
+        type: String,
+        default: null
+    },
+    avatar: {
+        type: String,
+        default: ''
     }
 }, { timestamps: true });
 

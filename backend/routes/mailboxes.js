@@ -13,6 +13,7 @@ const Lead = require('../models/Lead');
 const { protect, authorize } = require('../middleware/auth');
 const { encrypt, decrypt } = require('../utils/crypto');
 const hostingerMailService = require('../services/hostingerMailService');
+const { createActivityNotification } = require('./notifications');
 
 const upload = multer({ 
     storage: multer.memoryStorage(),
@@ -34,13 +35,14 @@ const verifySmtpConnection = async (host, port, secure, user, pass) => {
 };
 
 // @desc    Get all connected mailboxes for the current user (or all if master/admin)
+// @desc    Get all connected mailboxes for current user (or all if master/admin)
 // @route   GET /api/mailboxes
 // @access  Private
 router.get('/', protect, async (req, res) => {
     try {
         let filter = {};
 
-        if (req.user.role === 'master') {
+        if (['master', 'admin'].includes(req.user.role)) {
             if (req.query.assignedTo) {
                 if (req.query.assignedTo === 'unassigned') {
                     filter.assignedTo = null;
@@ -50,14 +52,12 @@ router.get('/', protect, async (req, res) => {
             } else if (req.query.userId) {
                 filter.userId = req.query.userId;
             }
+        } else if (req.user.role === 'mail_pedia') {
+            // Mail Pedia can ONLY view mailboxes assigned to them
+            filter = { assignedTo: req.user._id };
         } else {
-            // Admin, Sales, Mail Pedia can ONLY view mailboxes assigned to them or created by them
-            filter = {
-                $or: [
-                    { userId: req.user._id },
-                    { assignedTo: req.user._id }
-                ]
-            };
+            // Sales reps can NEVER access mailboxes
+            return res.status(403).json({ message: 'Access denied: Sales representatives do not have access to mailboxes.' });
         }
 
         const mailboxes = await Mailbox.find(filter)
@@ -73,6 +73,168 @@ router.get('/', protect, async (req, res) => {
         });
 
         res.json(safeMailboxes);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// @desc    Assign mailboxes (supports hybrid: auto equal distribution + manual split adjustments, or single assign/unassign)
+// @route   POST /api/mailboxes/assign
+// @access  Private/Master, Admin
+router.post('/assign', protect, authorize('master', 'admin'), async (req, res) => {
+    try {
+        const { mailboxIds, allocations, distributions, assignedTo, targetUserId } = req.body;
+        const effectiveAllocations = allocations || distributions;
+        const effectiveAssignedTo = assignedTo !== undefined ? assignedTo : targetUserId;
+
+        if (!Array.isArray(mailboxIds) || mailboxIds.length === 0) {
+            return res.status(400).json({ message: 'No mailboxes selected for assignment' });
+        }
+
+        // Case 1: Unassign all selected mailboxes
+        if (effectiveAssignedTo === null && (!effectiveAllocations || effectiveAllocations.length === 0)) {
+            const result = await Mailbox.updateMany(
+                { _id: { $in: mailboxIds } },
+                { $set: { assignedTo: null } }
+            );
+            return res.json({
+                success: true,
+                message: `Successfully unassigned ${result.modifiedCount} mailbox(es).`,
+                count: result.modifiedCount
+            });
+        }
+
+        const io = req.app.get('io');
+
+        // Case 2: Multi-user hybrid split distribution (allocations: [{ userId, count }, ...])
+        if (Array.isArray(effectiveAllocations) && effectiveAllocations.length > 0) {
+            const targetUserIds = effectiveAllocations.map(a => a.userId).filter(Boolean);
+            const targetUsers = await User.find({ _id: { $in: targetUserIds } });
+            const userMap = new Map(targetUsers.map(u => [u._id.toString(), u]));
+
+            // Strict authorization checks across all targets:
+            for (const alloc of effectiveAllocations) {
+                const targetUser = userMap.get(alloc.userId.toString());
+                if (!targetUser) {
+                    return res.status(404).json({ message: `Target user ${alloc.userId} not found` });
+                }
+
+                // 1. Sales can NEVER have mailboxes assigned anywhere on the CRM
+                if (targetUser.role === 'sales') {
+                    return res.status(403).json({ 
+                        message: `Authorization Violation: Mailboxes can NEVER be assigned to Sales representatives (${targetUser.name}). Mailboxes can only be assigned to Admin or Mail Pedia.` 
+                    });
+                }
+
+                // 2. On Admin panel: Admins can ONLY assign to mail_pedia
+                if (req.user.role === 'admin' && targetUser.role !== 'mail_pedia') {
+                    return res.status(403).json({ 
+                        message: `Authorization Violation: Admins can ONLY assign mailboxes to Mail Pedia users. Cannot assign to ${targetUser.name} (${targetUser.role}).` 
+                    });
+                }
+
+                // 3. Master can assign to admin and mail_pedia
+                if (req.user.role === 'master' && !['admin', 'mail_pedia'].includes(targetUser.role)) {
+                    return res.status(403).json({ 
+                        message: `Authorization Violation: Mailboxes can only be assigned to Admin or Mail Pedia.` 
+                    });
+                }
+            }
+
+            let currentIndex = 0;
+            const assignmentResults = [];
+
+            for (const alloc of effectiveAllocations) {
+                const count = parseInt(alloc.count, 10);
+                if (!count || count <= 0) continue;
+
+                const chunkIds = mailboxIds.slice(currentIndex, currentIndex + count);
+                currentIndex += count;
+
+                if (chunkIds.length === 0) break;
+
+                await Mailbox.updateMany(
+                    { _id: { $in: chunkIds } },
+                    { $set: { assignedTo: alloc.userId } }
+                );
+
+                const targetUser = userMap.get(alloc.userId.toString());
+                assignmentResults.push({
+                    userId: alloc.userId,
+                    userName: targetUser.name,
+                    assignedCount: chunkIds.length
+                });
+
+                // Send real-time notification to the assigned user
+                await createActivityNotification({
+                    io,
+                    recipient: targetUser._id,
+                    sender: req.user._id,
+                    type: 'mailbox_assigned',
+                    title: 'New Mailboxes Assigned',
+                    message: `${chunkIds.length} Hostinger mailbox(es) assigned to you by ${req.user.name} (${req.user.role}).`,
+                    metadata: { count: chunkIds.length, mailboxIds: chunkIds }
+                });
+            }
+
+            return res.json({
+                success: true,
+                message: `Successfully distributed ${currentIndex} mailbox(es) across ${assignmentResults.length} user(s).`,
+                results: assignmentResults
+            });
+        }
+
+        // Case 3: Single user assignment (assignedTo: userId)
+        if (effectiveAssignedTo) {
+            const targetUser = await User.findById(effectiveAssignedTo);
+            if (!targetUser) {
+                return res.status(404).json({ message: 'Target user not found' });
+            }
+
+            // 1. Sales can NEVER have mailboxes assigned anywhere on the CRM
+            if (targetUser.role === 'sales') {
+                return res.status(403).json({ 
+                    message: `Authorization Violation: Mailboxes can NEVER be assigned to Sales representatives (${targetUser.name}). Mailboxes can only be assigned to Admin or Mail Pedia.` 
+                });
+            }
+
+            // 2. On Admin panel: Admins can ONLY assign to mail_pedia
+            if (req.user.role === 'admin' && targetUser.role !== 'mail_pedia') {
+                return res.status(403).json({ 
+                    message: `Authorization Violation: Admins can ONLY assign mailboxes to Mail Pedia users. Cannot assign to ${targetUser.name} (${targetUser.role}).` 
+                });
+            }
+
+            // 3. Master can assign to admin and mail_pedia
+            if (req.user.role === 'master' && !['admin', 'mail_pedia'].includes(targetUser.role)) {
+                return res.status(403).json({ 
+                    message: `Authorization Violation: Mailboxes can only be assigned to Admin or Mail Pedia.` 
+                });
+            }
+
+            await Mailbox.updateMany(
+                { _id: { $in: mailboxIds } },
+                { $set: { assignedTo: targetUser._id } }
+            );
+
+            await createActivityNotification({
+                io,
+                recipient: targetUser._id,
+                sender: req.user._id,
+                type: 'mailbox_assigned',
+                title: 'Mailboxes Assigned',
+                message: `${mailboxIds.length} Hostinger mailbox(es) assigned to you by ${req.user.name} (${req.user.role}).`,
+                metadata: { count: mailboxIds.length, mailboxIds }
+            });
+
+            return res.json({
+                success: true,
+                message: `Successfully assigned ${mailboxIds.length} mailbox(es) to ${targetUser.name}.`,
+                assignedTo: { _id: targetUser._id, name: targetUser.name, role: targetUser.role }
+            });
+        }
+
+        return res.status(400).json({ message: 'Please specify target user(s) or distribution allocations' });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -159,11 +321,28 @@ router.post('/', protect, async (req, res) => {
     }
 });
 
+// Helper to read latest env on disk (in case .env was modified without restarting node server)
+const getHostingerApiKey = () => {
+    try {
+        const envPath = path.join(__dirname, '../.env');
+        if (fs.existsSync(envPath)) {
+            const content = fs.readFileSync(envPath, 'utf8');
+            const match = content.match(/HOSTINGER_MAIL_API_KEY=(.*)/);
+            if (match && match[1]) {
+                const key = match[1].trim();
+                process.env.HOSTINGER_MAIL_API_KEY = key;
+                return key;
+            }
+        }
+    } catch (_) {}
+    return (process.env.HOSTINGER_MAIL_API_KEY || '').trim();
+};
+
 // @desc    Get Hostinger Agentic Mail API integration status
 // @route   GET /api/mailboxes/hostinger-api-status
 // @access  Private
 router.get('/hostinger-api-status', protect, (req, res) => {
-    const key = (process.env.HOSTINGER_MAIL_API_KEY || '').trim();
+    const key = getHostingerApiKey();
     const masked = key ? (key.slice(0, 5) + '••••••••' + key.slice(-4)) : '';
     res.json({
         configured: Boolean(key),
@@ -183,7 +362,24 @@ router.post('/save-api-key', protect, async (req, res) => {
 
     try {
         const cleanKey = apiKey.trim();
-        const testRes = await hostingerMailService.testConnection(cleanKey);
+        let testRes = null;
+        let verifyErr = null;
+        try {
+            testRes = await hostingerMailService.testConnection(cleanKey);
+        } catch (e) {
+            verifyErr = e.message;
+        }
+
+        const forceSave = Boolean(req.body.forceSave);
+
+        // If verification failed and not forcing save:
+        if (verifyErr && !forceSave) {
+            return res.status(400).json({ 
+                message: `Hostinger Token Rejected: ${verifyErr}`,
+                verified: false,
+                canForceSave: true
+            });
+        }
 
         process.env.HOSTINGER_MAIL_API_KEY = cleanKey;
         process.env.HOSTINGER_DOMAIN = domain.trim();
@@ -206,11 +402,14 @@ router.post('/save-api-key', protect, async (req, res) => {
 
         res.json({
             success: true,
-            message: '✓ Hostinger Agentic Mail API Key saved and verified successfully!',
-            testData: testRes.data
+            verified: !verifyErr,
+            message: verifyErr 
+                ? `⚠️ Token saved to .env, but Hostinger reported: ${verifyErr}`
+                : '✓ Hostinger Agentic Mail API Key verified and saved successfully!',
+            testData: testRes ? testRes.data : null
         });
     } catch (err) {
-        res.status(400).json({ message: `API Verification Failed: ${err.message}` });
+        res.status(500).json({ message: `API Error: ${err.message}` });
     }
 });
 
@@ -219,7 +418,7 @@ router.post('/save-api-key', protect, async (req, res) => {
 // @access  Private
 router.post('/sync-hostinger-api', protect, async (req, res) => {
     try {
-        const apiKey = (req.body.apiKey || process.env.HOSTINGER_MAIL_API_KEY || '').trim();
+        const apiKey = (req.body.apiKey || getHostingerApiKey() || '').trim();
         if (!apiKey) {
             return res.status(400).json({ message: 'No Hostinger API Key configured. Please enter your API token first.' });
         }
@@ -307,21 +506,151 @@ router.post('/import-199-premade', protect, async (req, res) => {
     }
 });
 
-// @desc    Assign or unassign Hostinger mailboxes to a specific user (Admin / Mail Pedia)
+// @desc    Assign or unassign Hostinger mailboxes to a specific user or distribute across multiple users (Equal / Manual)
 // @route   POST /api/mailboxes/assign
-// @access  Private (Master only)
+// @access  Private (Master & Admin)
 router.post('/assign', protect, authorize('master', 'admin'), async (req, res) => {
     try {
-        const { mailboxIds, targetUserId } = req.body;
+        const { mailboxIds, targetUserId, distributionMode, distributions, selectedUserIds } = req.body;
 
         if (!Array.isArray(mailboxIds) || mailboxIds.length === 0) {
             return res.status(400).json({ message: 'Please select at least one mailbox to assign.' });
         }
 
+        // Case 1: Unassign all selected
+        if (targetUserId === 'unassign' || targetUserId === 'none') {
+            const result = await Mailbox.updateMany(
+                { _id: { $in: mailboxIds } },
+                { $set: { assignedTo: null } }
+            );
+            return res.json({
+                success: true,
+                message: `✓ Unassigned ${result.modifiedCount} mailbox(es). They are now in the Master pool.`,
+                modifiedCount: result.modifiedCount
+            });
+        }
+
+        // --- Role & Authorization Enforcement ---
+        // 1. Mailboxes can ONLY be assigned to 'admin' and 'mail_pedia' (NEVER 'sales')
+        // 2. On Admin panel: Admins can ONLY assign to 'mail_pedia'
+        let targetCheckIds = [];
+        if (targetUserId) {
+            targetCheckIds.push(targetUserId);
+        } else if (Array.isArray(selectedUserIds)) {
+            targetCheckIds.push(...selectedUserIds);
+        } else if (Array.isArray(distributions)) {
+            targetCheckIds.push(...distributions.map(d => d.userId));
+        }
+
+        if (targetCheckIds.length > 0) {
+            const checkUsers = await User.find({ _id: { $in: targetCheckIds } }, '_id name role designation');
+            for (const u of checkUsers) {
+                if (u.role === 'sales') {
+                    return res.status(403).json({
+                        message: `Forbidden: Mailboxes can only be assigned to Mail Pedia and Admin specialists. Cannot assign to Sales representative "${u.name}".`
+                    });
+                }
+                if (req.user.role === 'admin' && u.role !== 'mail_pedia') {
+                    return res.status(403).json({
+                        message: `Forbidden: As an Admin, you can only assign mailboxes to Mail Pedia specialists. Cannot assign to "${u.name}" (${u.role}).`
+                    });
+                }
+            }
+        }
+
+        const io = req.app.get('io');
+
+        // Case 2: Multi-user distribution ('equal')
+        if (distributionMode === 'equal' && Array.isArray(selectedUserIds) && selectedUserIds.length > 0) {
+            const totalMailboxes = mailboxIds.length;
+            const userCount = selectedUserIds.length;
+            const baseCount = Math.floor(totalMailboxes / userCount);
+            let remainder = totalMailboxes % userCount;
+
+            let startIndex = 0;
+            const resultsSummary = [];
+
+            for (let i = 0; i < userCount; i++) {
+                const uid = selectedUserIds[i];
+                const countForThisUser = baseCount + (remainder > 0 ? 1 : 0);
+                if (remainder > 0) remainder--;
+
+                if (countForThisUser > 0 && startIndex < totalMailboxes) {
+                    const chunk = mailboxIds.slice(startIndex, startIndex + countForThisUser);
+                    startIndex += chunk.length;
+
+                    await Mailbox.updateMany(
+                        { _id: { $in: chunk } },
+                        { $set: { assignedTo: uid } }
+                    );
+
+                    const u = await User.findById(uid, 'name email');
+                    resultsSummary.push(`${u?.name || 'User'}: ${chunk.length}`);
+
+                    createActivityNotification({
+                        io,
+                        recipient: uid,
+                        sender: req.user._id,
+                        type: 'mailbox_assigned',
+                        title: 'Hostinger Mailbox(es) Assigned',
+                        message: `${req.user.name} (${req.user.role}) assigned ${chunk.length} Hostinger mailbox(es) to you.`,
+                        metadata: { count: chunk.length }
+                    });
+                }
+            }
+
+            return res.json({
+                success: true,
+                message: `✓ Successfully divided ${totalMailboxes} mailboxes equally among ${userCount} users (${resultsSummary.join(', ')})`,
+                modifiedCount: totalMailboxes
+            });
+        }
+
+        // Case 3: Multi-user distribution ('manual')
+        if (distributionMode === 'manual' && Array.isArray(distributions) && distributions.length > 0) {
+            let startIndex = 0;
+            const resultsSummary = [];
+            let totalAssigned = 0;
+
+            for (const dist of distributions) {
+                const count = Math.max(0, parseInt(dist.count, 10) || 0);
+                if (count > 0 && startIndex < mailboxIds.length) {
+                    const chunk = mailboxIds.slice(startIndex, startIndex + count);
+                    startIndex += chunk.length;
+                    totalAssigned += chunk.length;
+
+                    await Mailbox.updateMany(
+                        { _id: { $in: chunk } },
+                        { $set: { assignedTo: dist.userId } }
+                    );
+
+                    const u = await User.findById(dist.userId, 'name email');
+                    resultsSummary.push(`${u?.name || 'User'}: ${chunk.length}`);
+
+                    createActivityNotification({
+                        io,
+                        recipient: dist.userId,
+                        sender: req.user._id,
+                        type: 'mailbox_assigned',
+                        title: 'Hostinger Mailbox(es) Assigned',
+                        message: `${req.user.name} (${req.user.role}) assigned ${chunk.length} Hostinger mailbox(es) to you.`,
+                        metadata: { count: chunk.length }
+                    });
+                }
+            }
+
+            return res.json({
+                success: true,
+                message: `✓ Successfully manually distributed ${totalAssigned} mailboxes (${resultsSummary.join(', ')})`,
+                modifiedCount: totalAssigned
+            });
+        }
+
+        // Case 4: Single user assignment (standard)
         let assignedUserName = 'Unassigned';
         let updateValue = null;
 
-        if (targetUserId && targetUserId !== 'unassign' && targetUserId !== 'none') {
+        if (targetUserId) {
             const targetUser = await User.findById(targetUserId);
             if (!targetUser) {
                 return res.status(404).json({ message: 'Target user not found.' });
@@ -334,6 +663,18 @@ router.post('/assign', protect, authorize('master', 'admin'), async (req, res) =
             { _id: { $in: mailboxIds } },
             { $set: { assignedTo: updateValue } }
         );
+
+        if (updateValue) {
+            createActivityNotification({
+                io,
+                recipient: updateValue,
+                sender: req.user._id,
+                type: 'mailbox_assigned',
+                title: 'Hostinger Mailbox(es) Assigned',
+                message: `${req.user.name} (${req.user.role}) assigned ${result.modifiedCount} Hostinger mailbox(es) to you.`,
+                metadata: { count: result.modifiedCount }
+            });
+        }
 
         res.json({
             success: true,
@@ -424,6 +765,48 @@ router.post('/sync-inbox', protect, async (req, res) => {
                             });
                         }
                     }
+                }
+
+                // Also sync Sent folder (for emails sent directly from Hostinger webmail)
+                try {
+                    const sentUrl = `https://api.mail.hostinger.com/api/v1/mailboxes/${encodeURIComponent(mb.mailboxResourceId)}/folders/Sent/messages?perPage=25`;
+                    const sentResp = await axios.get(sentUrl, {
+                        headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'application/json' },
+                        timeout: 8000
+                    });
+
+                    const sentMessages = sentResp.data?.data || [];
+                    for (const msg of sentMessages) {
+                        const messageId = msg.id || msg.uid || `sent-${Date.now()}`;
+                        const toAddr = (msg.to || msg.recipient || '').trim();
+                        const cleanTo = (toAddr.match(/<([^>]+)>/) ? toAddr.match(/<([^>]+)>/)[1] : toAddr).toLowerCase();
+
+                        const exists = await Email.findOne({
+                            from: mb.emailUser,
+                            $or: [{ messageId: String(messageId) }, { subject: msg.subject, to: cleanTo }]
+                        });
+
+                        if (!exists && cleanTo) {
+                            const matchedLead = await Lead.findOne({ email: cleanTo });
+                            await Email.create({
+                                from: mb.emailUser,
+                                fromName: mb.senderName || mb.emailUser,
+                                to: cleanTo,
+                                subject: msg.subject || '(No Subject)',
+                                text: msg.snippet || msg.text || '',
+                                html: msg.html || `<p>${msg.snippet || ''}</p>`,
+                                direction: 'outbound',
+                                folder: 'sent',
+                                leadId: matchedLead ? matchedLead._id : null,
+                                userId: mb.assignedTo || mb.userId,
+                                isRead: true,
+                                messageId: String(messageId)
+                            });
+                            totalSynced++;
+                        }
+                    }
+                } catch (sentFolderErr) {
+                    // Ignore if Sent folder has alternate naming
                 }
             } catch (mbErr) {
                 console.warn(`[SYNC INBOX WARNING] ${mb.emailUser}:`, mbErr.message);
@@ -699,6 +1082,41 @@ router.post('/:id/test', protect, async (req, res) => {
             success: false,
             message: `Connection check failed: ${error.message}`
         });
+    }
+});
+
+// @desc    Bulk update status (active / paused) for selected mailboxes
+// @route   PUT /api/mailboxes/bulk-status
+// @access  Private
+router.put('/bulk-status', protect, async (req, res) => {
+    try {
+        const { mailboxIds, status } = req.body;
+        if (!Array.isArray(mailboxIds) || mailboxIds.length === 0) {
+            return res.status(400).json({ message: 'No mailboxes selected for status update' });
+        }
+        if (!['active', 'paused'].includes(status)) {
+            return res.status(400).json({ message: 'Status must be "active" or "paused"' });
+        }
+
+        const filter = { _id: { $in: mailboxIds } };
+        if (!['master', 'admin'].includes(req.user.role)) {
+            filter.userId = req.user._id;
+        }
+
+        const updateData = { status };
+        if (status === 'active') {
+            updateData.lastError = ''; // Clear error when manually activated
+        }
+
+        const result = await Mailbox.updateMany(filter, { $set: updateData });
+
+        res.json({
+            success: true,
+            message: `Updated ${result.modifiedCount} mailbox(es) to ${status === 'active' ? 'Active' : 'Paused'}.`,
+            modifiedCount: result.modifiedCount
+        });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
     }
 });
 

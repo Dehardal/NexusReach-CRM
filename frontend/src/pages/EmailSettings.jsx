@@ -6,6 +6,7 @@ import {
     HelpCircle, ShieldCheck, Users, Globe, ExternalLink, Key,
     Server, Info, Copy, Check
 } from 'lucide-react';
+import CustomDropdown from '../components/CustomDropdown';
 
 const EmailSettings = () => {
     const { user, api } = useAuth();
@@ -314,17 +315,18 @@ const EmailSettings = () => {
                                 <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
                                     Outbound Provider
                                 </label>
-                                <select 
+                                <CustomDropdown 
                                     value={provider} 
-                                    onChange={e => handleProviderChange(e.target.value)} 
-                                    className="form-input"
-                                >
-                                    <option value="resend">Resend (Free 3,000/mo - Recommended for Custom Domain)</option>
-                                    <option value="brevo">Brevo / Sendinblue (Free 300/day)</option>
-                                    <option value="custom">Custom Domain SMTP Server</option>
-                                    <option value="gmail">Google Gmail / Workspace (App Password)</option>
-                                    <option value="outlook">Microsoft Outlook / Office 365</option>
-                                </select>
+                                    onChange={val => handleProviderChange(val)} 
+                                    options={[
+                                        { value: 'resend', label: 'Resend (Free 3,000/mo - Recommended)', icon: '⚡' },
+                                        { value: 'brevo', label: 'Brevo / Sendinblue (Free 300/day)', icon: '🚀' },
+                                        { value: 'custom', label: 'Custom Domain SMTP Server', icon: '⚙️' },
+                                        { value: 'gmail', label: 'Google Gmail / Workspace', icon: '✉️' },
+                                        { value: 'outlook', label: 'Microsoft Outlook / Office 365', icon: '📫' }
+                                    ]}
+                                    width="100%"
+                                />
                             </div>
 
                             <div>

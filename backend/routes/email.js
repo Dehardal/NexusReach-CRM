@@ -212,13 +212,14 @@ const getFolderCounts = async (user, filterUser, isAdmin) => {
         baseQuery.userId = filterUser;
     }
 
-    const [unreadCount, spamCount, trashCount] = await Promise.all([
+    const [unreadCount, spamCount, trashCount, starredCount] = await Promise.all([
         Email.countDocuments({ ...baseQuery, direction: 'inbound', folder: { $in: ['inbox', null] }, isTrash: { $ne: true }, isRead: false }),
         Email.countDocuments({ ...baseQuery, folder: 'spam', isTrash: { $ne: true } }),
-        Email.countDocuments({ ...baseQuery, isTrash: true })
+        Email.countDocuments({ ...baseQuery, isTrash: true }),
+        Email.countDocuments({ ...baseQuery, isStarred: true, isTrash: { $ne: true } })
     ]);
 
-    return { unreadCount, spamCount, trashCount };
+    return { unreadCount, spamCount, trashCount, starredCount };
 };
 
 // @desc    Get inbox (inbound) emails (User-scoped or Team-scoped)
@@ -291,6 +292,46 @@ router.get('/sent', protect, async (req, res) => {
         if (search) {
             query.$or = [
                 { subject: { $regex: search, $options: 'i' } },
+                { to: { $regex: search, $options: 'i' } },
+                { text: { $regex: search, $options: 'i' } }
+            ];
+        }
+
+        const emails = await Email.find(query)
+            .sort({ createdAt: -1 })
+            .limit(100)
+            .populate('leadId', 'name phone email company')
+            .populate('userId', 'name email role');
+
+        res.json(emails);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// @desc    Get starred emails
+// @route   GET /api/email/starred
+// @access  Private
+router.get('/starred', protect, async (req, res) => {
+    try {
+        const { search, filterUser } = req.query;
+        let query = { 
+            isStarred: true,
+            isTrash: { $ne: true }
+        };
+
+        const isAdmin = ['master', 'admin', 'manager'].includes(req.user.role);
+
+        if (!isAdmin) {
+            query.userId = req.user._id;
+        } else if (filterUser && filterUser !== 'all') {
+            query.userId = filterUser;
+        }
+
+        if (search) {
+            query.$or = [
+                { subject: { $regex: search, $options: 'i' } },
+                { from: { $regex: search, $options: 'i' } },
                 { to: { $regex: search, $options: 'i' } },
                 { text: { $regex: search, $options: 'i' } }
             ];
@@ -415,6 +456,33 @@ router.put('/:id/read', protect, async (req, res) => {
     try {
         const email = await Email.findByIdAndUpdate(req.params.id, { isRead: true }, { new: true });
         res.json(email);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// @desc    Mark email as unread
+// @route   PUT /api/email/:id/unread
+// @access  Private
+router.put('/:id/unread', protect, async (req, res) => {
+    try {
+        const email = await Email.findByIdAndUpdate(req.params.id, { isRead: false }, { new: true });
+        res.json(email);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// @desc    Toggle star on email
+// @route   PUT /api/email/:id/star
+// @access  Private
+router.put('/:id/star', protect, async (req, res) => {
+    try {
+        const email = await Email.findById(req.params.id);
+        if (!email) return res.status(404).json({ message: 'Email not found' });
+        email.isStarred = !email.isStarred;
+        await email.save();
+        res.json({ success: true, isStarred: email.isStarred, email });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }

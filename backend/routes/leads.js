@@ -11,6 +11,7 @@ const { protect, authorize } = require('../middleware/auth');
 const aiService = require('../services/aiService');
 const emailService = require('../services/emailService');
 const whatsappService = require('../services/whatsappService');
+const { createActivityNotification } = require('./notifications');
 
 // Multer setup for CSV/Excel file imports
 const storage = multer.diskStorage({
@@ -679,6 +680,19 @@ router.post('/bulk-assign', protect, authorize('master', 'admin'), async (req, r
             }
         );
 
+        if (targetUser && result.modifiedCount > 0) {
+            const io = req.app.get('io');
+            createActivityNotification({
+                io,
+                recipient: targetUser._id,
+                sender: req.user._id,
+                type: 'lead_assigned',
+                title: 'New Leads Assigned',
+                message: `${req.user.name} (${req.user.role}) allocated ${result.modifiedCount} lead(s) to you.`,
+                metadata: { leadCount: result.modifiedCount }
+            });
+        }
+
         res.json({
             success: true,
             message: `Successfully allocated ${result.modifiedCount} leads`,
@@ -750,6 +764,19 @@ router.post('/split-chunk', protect, authorize('master', 'admin'), async (req, r
                 }
             }
         );
+
+        if (targetUser && result.modifiedCount > 0) {
+            const io = req.app.get('io');
+            createActivityNotification({
+                io,
+                recipient: targetUser._id,
+                sender: req.user._id,
+                type: 'lead_assigned',
+                title: 'Batch Leads Allocated',
+                message: `${req.user.name} allocated a batch of ${result.modifiedCount} leads to you.`,
+                metadata: { leadCount: result.modifiedCount }
+            });
+        }
 
         res.json({
             success: true,
