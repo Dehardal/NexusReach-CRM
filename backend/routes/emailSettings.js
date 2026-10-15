@@ -76,10 +76,16 @@ router.post('/', protect, async (req, res) => {
 
         // Test credentials with Nodemailer verify()
         let transporter;
-        if (provider === 'gmail') {
+        if (provider === 'gmail' || cleanEmailUser.includes('gmail.com')) {
+            const port = Number(smtpPort) || 587;
             transporter = nodemailer.createTransport({
-                service: 'gmail',
-                auth: { user: effectiveSmtpUser, pass: passToVerify }
+                host: 'smtp.gmail.com',
+                port: port,
+                secure: port === 465,
+                auth: { user: effectiveSmtpUser, pass: passToVerify },
+                tls: { rejectUnauthorized: false },
+                connectionTimeout: 10000,
+                greetingTimeout: 10000
             });
         } else if (provider === 'resend') {
             transporter = nodemailer.createTransport({

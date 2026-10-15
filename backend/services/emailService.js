@@ -100,12 +100,18 @@ const buildTransportConfig = (creds) => {
         socketTimeout: 12000
     };
 
-    if (creds.provider === 'gmail') {
+    if (creds.provider === 'gmail' || (creds.user && creds.user.includes('gmail.com'))) {
+        const port = Number(creds.port) || 587;
         return {
-            service: 'gmail',
+            host: 'smtp.gmail.com',
+            port: port,
+            secure: port === 465,
             auth: {
                 user: creds.smtpUser || creds.user,
                 pass: creds.pass
+            },
+            tls: {
+                rejectUnauthorized: false
             },
             ...baseTimeouts
         };
@@ -222,6 +228,37 @@ const sendFollowUpNotification = async (leadData, followUpData, salesPersonName,
     }
 };
 
+// Helper to dispatch email via SMTP with automatic dual-port fallback (587 STARTTLS <-> 465 SSL)
+const dispatchWithPortFallback = async ({ host, port, authUser, pass, isGmail, mailOptions }) => {
+    const primaryPort = isGmail ? (port ? Number(port) : 587) : (Number(port) || 587);
+    const primarySecure = primaryPort === 465;
+
+    const createConfig = (p, sec) => ({
+        host: host || (isGmail ? 'smtp.gmail.com' : 'smtp.resend.com'),
+        port: p,
+        secure: sec,
+        auth: { user: authUser, pass },
+        tls: { rejectUnauthorized: false },
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 15000
+    });
+
+    const primaryTransporter = nodemailer.createTransport(createConfig(primaryPort, primarySecure));
+    try {
+        return await primaryTransporter.sendMail(mailOptions);
+    } catch (err) {
+        const isConnOrTimeout = err.code === 'ETIMEDOUT' || err.code === 'ECONNREFUSED' || err.code === 'ESOCKET' || (err.message && err.message.includes('timeout'));
+        if (isConnOrTimeout && isGmail) {
+            const fallbackPort = primaryPort === 465 ? 587 : 465;
+            console.warn(`[EMAIL SERVICE] Connection timed out on port ${primaryPort}. Retrying automatically via port ${fallbackPort}...`);
+            const fallbackTransporter = nodemailer.createTransport(createConfig(fallbackPort, fallbackPort === 465));
+            return await fallbackTransporter.sendMail(mailOptions);
+        }
+        throw err;
+    }
+};
+
 // Send direct client email (supports Mailbox identities, Cloudflare domain aliases, and user-specific credentials)
 const sendDirectClientEmail = async (toEmail, subject, htmlBody, userId = null, customSender = null) => {
     let attemptedSender = customSender || 'your email account';
@@ -266,38 +303,15 @@ const sendDirectClientEmail = async (toEmail, subject, htmlBody, userId = null, 
             }
 
             const authUser = matchedMailbox.smtpUser || matchedMailbox.emailUser;
-            const isGmailOrCloudflare = matchedMailbox.provider === 'gmail' || 
-                                       matchedMailbox.provider === 'cloudflare' || 
-                                       (matchedMailbox.smtpHost && matchedMailbox.smtpHost.includes('gmail.com')) ||
-                                       (matchedMailbox.emailUser && matchedMailbox.emailUser.includes('gmail.com'));
+            const isGmail = matchedMailbox.provider === 'gmail' || 
+                           matchedMailbox.provider === 'cloudflare' || 
+                           (matchedMailbox.smtpHost && matchedMailbox.smtpHost.includes('gmail.com')) ||
+                           (matchedMailbox.emailUser && matchedMailbox.emailUser.includes('gmail.com'));
 
-            if (isGmailOrCloudflare && pass) {
+            if (isGmail && pass) {
                 pass = pass.replace(/\s+/g, '');
             }
 
-            const transportConfig = isGmailOrCloudflare ? {
-                service: 'gmail',
-                auth: {
-                    user: authUser,
-                    pass
-                },
-                connectionTimeout: 10000,
-                greetingTimeout: 10000,
-                socketTimeout: 15000
-            } : {
-                host: matchedMailbox.smtpHost || 'smtp.hostinger.com',
-                port: Number(matchedMailbox.smtpPort) || 465,
-                secure: Number(matchedMailbox.smtpPort) === 465 || matchedMailbox.smtpSecure,
-                auth: {
-                    user: authUser,
-                    pass
-                },
-                connectionTimeout: 10000,
-                greetingTimeout: 10000,
-                socketTimeout: 15000
-            };
-
-            const transporter = nodemailer.createTransport(transportConfig);
             const senderDisplayName = matchedMailbox.senderName || 'CRM Outreach';
             const senderAddress = matchedMailbox.emailUser;
 
@@ -313,7 +327,15 @@ const sendDirectClientEmail = async (toEmail, subject, htmlBody, userId = null, 
                 `
             };
 
-            const info = await transporter.sendMail(mailOptions);
+            const info = await dispatchWithPortFallback({
+                host: matchedMailbox.smtpHost || (isGmail ? 'smtp.gmail.com' : 'smtp.hostinger.com'),
+                port: matchedMailbox.smtpPort || (isGmail ? 587 : 465),
+                authUser,
+                pass,
+                isGmail,
+                mailOptions
+            });
+
             console.log(`✅ Direct email sent to ${toEmail} from ${senderAddress} (via Mailbox auth ${authUser})!`);
 
             // Update stats on mailbox
@@ -352,29 +374,6 @@ const sendDirectClientEmail = async (toEmail, subject, htmlBody, userId = null, 
             }
 
             const authUser = matchedSettings.smtpUser || matchedSettings.emailUser;
-            const transportConfig = isGmail ? {
-                service: 'gmail',
-                auth: {
-                    user: authUser,
-                    pass
-                },
-                connectionTimeout: 10000,
-                greetingTimeout: 10000,
-                socketTimeout: 15000
-            } : {
-                host: matchedSettings.smtpHost || 'smtp.resend.com',
-                port: Number(matchedSettings.smtpPort) || 587,
-                secure: Number(matchedSettings.smtpPort) === 465,
-                auth: {
-                    user: authUser,
-                    pass
-                },
-                connectionTimeout: 10000,
-                greetingTimeout: 10000,
-                socketTimeout: 15000
-            };
-
-            const transporter = nodemailer.createTransport(transportConfig);
             const senderDisplayName = matchedSettings.senderName || 'CRM Outreach';
             const senderAddress = matchedSettings.emailUser;
 
@@ -390,7 +389,15 @@ const sendDirectClientEmail = async (toEmail, subject, htmlBody, userId = null, 
                 `
             };
 
-            const info = await transporter.sendMail(mailOptions);
+            const info = await dispatchWithPortFallback({
+                host: matchedSettings.smtpHost || (isGmail ? 'smtp.gmail.com' : 'smtp.resend.com'),
+                port: matchedSettings.smtpPort || (isGmail ? 587 : 465),
+                authUser,
+                pass,
+                isGmail,
+                mailOptions
+            });
+
             console.log(`✅ Direct email sent to ${toEmail} from ${senderAddress} (via EmailSettings auth ${authUser})!`);
 
             return { 
@@ -402,10 +409,11 @@ const sendDirectClientEmail = async (toEmail, subject, htmlBody, userId = null, 
         }
 
         // Case C: Fallback to user's personal or system EmailSettings
-        const { transporter, creds } = await createTransporter(userId);
+        const { creds } = await createTransporter(userId);
 
         const senderAddress = (customSender && customSender.trim()) ? customSender.trim().toLowerCase() : creds.user;
         const senderDisplayName = creds.name || 'CRM Outreach';
+        const isGmail = creds.provider === 'gmail' || (creds.user && creds.user.includes('gmail.com')) || (creds.host && creds.host.includes('gmail.com'));
 
         const mailOptions = {
             from: `"${senderDisplayName}" <${senderAddress}>`,
@@ -419,7 +427,15 @@ const sendDirectClientEmail = async (toEmail, subject, htmlBody, userId = null, 
             `
         };
 
-        const info = await transporter.sendMail(mailOptions);
+        const info = await dispatchWithPortFallback({
+            host: creds.host || (isGmail ? 'smtp.gmail.com' : 'smtp.resend.com'),
+            port: creds.port || (isGmail ? 587 : 465),
+            authUser: creds.smtpUser || creds.user,
+            pass: creds.pass,
+            isGmail,
+            mailOptions
+        });
+
         console.log(`✅ Direct email sent to ${toEmail} from ${senderAddress} successfully!`);
         return { 
             success: true, 
