@@ -351,7 +351,7 @@ const EmailInbox = () => {
                 text: composeBody,
                 html: `<div style="font-family: sans-serif; line-height: 1.6; color: #1f2937;">${composeBody.replace(/\n/g, '<br/>')}</div>`,
                 from: selectedSender || myMailboxAddress
-            });
+            }, { timeout: 20000 });
 
             toast.success('Email sent successfully!');
             setComposeOpen(false);
@@ -364,7 +364,7 @@ const EmailInbox = () => {
                 setSelectedEmail(data.email);
             }
         } catch (err) {
-            toast.error(err.response?.data?.message || 'Failed to send email. Check Email Settings.');
+            toast.error(err.response?.data?.message || err.message || 'Failed to send email. Check Email Settings.');
         } finally {
             setSendingEmail(false);
         }
@@ -388,7 +388,7 @@ const EmailInbox = () => {
                 text: replyText,
                 html: `<div style="font-family: sans-serif; line-height: 1.6; color: #1f2937;">${replyText.replace(/\n/g, '<br/>')}</div>`,
                 leadId: selectedEmail.leadId?._id || selectedEmail.leadId || null
-            });
+            }, { timeout: 20000 });
 
             toast.success(`Reply sent to ${selectedEmail.from}!`);
             setReplyText('');
@@ -397,7 +397,7 @@ const EmailInbox = () => {
                 setEmails(prev => [data.email, ...prev]);
             }
         } catch (err) {
-            toast.error(err.response?.data?.message || 'Failed to send reply. Verify your SMTP settings.');
+            toast.error(err.response?.data?.message || err.message || 'Failed to send reply. Verify your SMTP settings.');
         } finally {
             setSendingReply(false);
         }

@@ -605,7 +605,7 @@ router.post('/send', protect, async (req, res) => {
         // Record outbound email stamped with req.user._id
         const newEmail = await Email.create({
             from: sendResult.sender,
-            fromName: req.user.name,
+            fromName: sendResult.senderName || req.user.name,
             to: to.trim().toLowerCase(),
             subject,
             text: text || (html ? html.replace(/<[^>]+>/g, ' ') : ''),
