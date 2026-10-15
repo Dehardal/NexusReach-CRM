@@ -15,6 +15,9 @@ const getActiveEmailCredentials = async (userId = null) => {
         if (!settings) {
             settings = await EmailSettings.findOne({ isConfigured: true }).sort({ updatedAt: -1 });
         }
+        if (!settings) {
+            settings = await EmailSettings.findOne({ emailPass: { $exists: true, $ne: '' } }).sort({ updatedAt: -1 });
+        }
 
         if (settings && settings.emailUser && settings.emailPass) {
             let decryptedPass = settings.emailPass;
@@ -24,14 +27,49 @@ const getActiveEmailCredentials = async (userId = null) => {
                 decryptedPass = settings.emailPass;
             }
 
+            const isGmail = settings.provider === 'gmail' || 
+                           (settings.emailUser && settings.emailUser.includes('gmail.com')) ||
+                           (settings.smtpHost && settings.smtpHost.includes('gmail.com'));
+            if (isGmail && decryptedPass) {
+                decryptedPass = decryptedPass.replace(/\s+/g, '');
+            }
+
             return {
                 user: settings.emailUser,
                 smtpUser: settings.smtpUser || settings.emailUser,
                 pass: decryptedPass,
                 name: settings.senderName || 'CRM Outreach',
                 provider: settings.provider || 'custom',
-                host: settings.smtpHost || (settings.provider === 'gmail' ? 'smtp.gmail.com' : 'smtp.resend.com'),
-                port: settings.smtpPort || (settings.provider === 'gmail' ? 587 : 465)
+                host: settings.smtpHost || (isGmail ? 'smtp.gmail.com' : 'smtp.resend.com'),
+                port: settings.smtpPort || (isGmail ? 587 : 465)
+            };
+        }
+
+        // Check configured Mailboxes as secondary fallback
+        const fallbackMb = await Mailbox.findOne({ emailPass: { $exists: true, $ne: '' } }).sort({ updatedAt: -1 });
+        if (fallbackMb && fallbackMb.emailUser && fallbackMb.emailPass) {
+            let decryptedPass = fallbackMb.emailPass;
+            try {
+                decryptedPass = decrypt(fallbackMb.emailPass);
+            } catch (decErr) {
+                decryptedPass = fallbackMb.emailPass;
+            }
+
+            const isGmail = fallbackMb.provider === 'gmail' || 
+                           (fallbackMb.emailUser && fallbackMb.emailUser.includes('gmail.com')) ||
+                           (fallbackMb.smtpHost && fallbackMb.smtpHost.includes('gmail.com'));
+            if (isGmail && decryptedPass) {
+                decryptedPass = decryptedPass.replace(/\s+/g, '');
+            }
+
+            return {
+                user: fallbackMb.emailUser,
+                smtpUser: fallbackMb.smtpUser || fallbackMb.emailUser,
+                pass: decryptedPass,
+                name: fallbackMb.senderName || 'CRM Outreach',
+                provider: fallbackMb.provider || (isGmail ? 'gmail' : 'custom'),
+                host: fallbackMb.smtpHost || (isGmail ? 'smtp.gmail.com' : 'smtp.hostinger.com'),
+                port: fallbackMb.smtpPort || (isGmail ? 587 : 465)
             };
         }
     } catch (e) {
@@ -39,10 +77,11 @@ const getActiveEmailCredentials = async (userId = null) => {
     }
 
     if (process.env.EMAIL_USER && process.env.EMAIL_PASS && process.env.EMAIL_PASS !== 'testpass') {
+        const pass = process.env.EMAIL_PASS.replace(/\s+/g, '');
         return {
             user: process.env.EMAIL_USER,
             smtpUser: process.env.EMAIL_USER,
-            pass: process.env.EMAIL_PASS,
+            pass: pass,
             name: 'CRM Outreach',
             provider: 'gmail',
             host: 'smtp.gmail.com',
@@ -185,18 +224,31 @@ const sendFollowUpNotification = async (leadData, followUpData, salesPersonName,
 
 // Send direct client email (supports Mailbox identities, Cloudflare domain aliases, and user-specific credentials)
 const sendDirectClientEmail = async (toEmail, subject, htmlBody, userId = null, customSender = null) => {
+    let attemptedSender = customSender || 'your email account';
     try {
         const bodyContent = htmlBody && (htmlBody.includes('<p>') || htmlBody.includes('<br') || htmlBody.includes('<div>'))
             ? htmlBody 
             : (htmlBody || '').replace(/\n/g, '<br/>');
 
-        // Step 1: Check if customSender corresponds to a configured Mailbox (e.g. Cloudflare alias or Hostinger inbox)
         let matchedMailbox = null;
+        let matchedSettings = null;
+
         if (customSender && customSender.trim()) {
             const cleanSender = customSender.trim().toLowerCase();
+            attemptedSender = cleanSender;
+
+            // 1. Check Mailbox collection
             matchedMailbox = await Mailbox.findOne({ emailUser: cleanSender });
             if (!matchedMailbox) {
                 matchedMailbox = await Mailbox.findOne({ emailUser: new RegExp(`^${cleanSender}$`, 'i') });
+            }
+
+            // 2. If not found in Mailbox, check EmailSettings collection
+            if (!matchedMailbox) {
+                matchedSettings = await EmailSettings.findOne({ emailUser: cleanSender });
+                if (!matchedSettings) {
+                    matchedSettings = await EmailSettings.findOne({ emailUser: new RegExp(`^${cleanSender}$`, 'i') });
+                }
             }
         }
 
@@ -210,13 +262,18 @@ const sendDirectClientEmail = async (toEmail, subject, htmlBody, userId = null, 
             }
 
             if (!pass || pass === 'testpass') {
-                throw new Error(`Mailbox "${matchedMailbox.emailUser}" does not have valid credentials. Please reconnect it in Email Settings.`);
+                throw new Error(`Mailbox "${matchedMailbox.emailUser}" does not have valid credentials. Please reconnect it in Mailboxes.`);
             }
 
             const authUser = matchedMailbox.smtpUser || matchedMailbox.emailUser;
             const isGmailOrCloudflare = matchedMailbox.provider === 'gmail' || 
                                        matchedMailbox.provider === 'cloudflare' || 
-                                       (matchedMailbox.smtpHost && matchedMailbox.smtpHost.includes('gmail.com'));
+                                       (matchedMailbox.smtpHost && matchedMailbox.smtpHost.includes('gmail.com')) ||
+                                       (matchedMailbox.emailUser && matchedMailbox.emailUser.includes('gmail.com'));
+
+            if (isGmailOrCloudflare && pass) {
+                pass = pass.replace(/\s+/g, '');
+            }
 
             const transportConfig = isGmailOrCloudflare ? {
                 service: 'gmail',
@@ -224,9 +281,9 @@ const sendDirectClientEmail = async (toEmail, subject, htmlBody, userId = null, 
                     user: authUser,
                     pass
                 },
-                connectionTimeout: 8000,
-                greetingTimeout: 8000,
-                socketTimeout: 12000
+                connectionTimeout: 10000,
+                greetingTimeout: 10000,
+                socketTimeout: 15000
             } : {
                 host: matchedMailbox.smtpHost || 'smtp.hostinger.com',
                 port: Number(matchedMailbox.smtpPort) || 465,
@@ -235,9 +292,9 @@ const sendDirectClientEmail = async (toEmail, subject, htmlBody, userId = null, 
                     user: authUser,
                     pass
                 },
-                connectionTimeout: 8000,
-                greetingTimeout: 8000,
-                socketTimeout: 12000
+                connectionTimeout: 10000,
+                greetingTimeout: 10000,
+                socketTimeout: 15000
             };
 
             const transporter = nodemailer.createTransport(transportConfig);
@@ -273,7 +330,78 @@ const sendDirectClientEmail = async (toEmail, subject, htmlBody, userId = null, 
             };
         }
 
-        // Case B: No matching Mailbox, use user's personal EmailSettings
+        // Case B: Sender found in EmailSettings directly
+        if (matchedSettings) {
+            let pass = matchedSettings.emailPass;
+            try {
+                pass = decrypt(matchedSettings.emailPass);
+            } catch (decErr) {
+                pass = matchedSettings.emailPass;
+            }
+
+            if (!pass || pass === 'testpass') {
+                throw new Error(`Email account "${matchedSettings.emailUser}" does not have valid credentials. Please configure your App Password in Email Settings.`);
+            }
+
+            const isGmail = matchedSettings.provider === 'gmail' || 
+                           (matchedSettings.emailUser && matchedSettings.emailUser.includes('gmail.com')) ||
+                           (matchedSettings.smtpHost && matchedSettings.smtpHost.includes('gmail.com'));
+
+            if (isGmail && pass) {
+                pass = pass.replace(/\s+/g, '');
+            }
+
+            const authUser = matchedSettings.smtpUser || matchedSettings.emailUser;
+            const transportConfig = isGmail ? {
+                service: 'gmail',
+                auth: {
+                    user: authUser,
+                    pass
+                },
+                connectionTimeout: 10000,
+                greetingTimeout: 10000,
+                socketTimeout: 15000
+            } : {
+                host: matchedSettings.smtpHost || 'smtp.resend.com',
+                port: Number(matchedSettings.smtpPort) || 587,
+                secure: Number(matchedSettings.smtpPort) === 465,
+                auth: {
+                    user: authUser,
+                    pass
+                },
+                connectionTimeout: 10000,
+                greetingTimeout: 10000,
+                socketTimeout: 15000
+            };
+
+            const transporter = nodemailer.createTransport(transportConfig);
+            const senderDisplayName = matchedSettings.senderName || 'CRM Outreach';
+            const senderAddress = matchedSettings.emailUser;
+
+            const mailOptions = {
+                from: `"${senderDisplayName}" <${senderAddress}>`,
+                replyTo: senderAddress,
+                to: toEmail,
+                subject: subject,
+                html: `
+                    <div style="font-family: sans-serif; font-size: 15px; color: #1f2937; line-height: 1.6;">
+                        ${bodyContent}
+                    </div>
+                `
+            };
+
+            const info = await transporter.sendMail(mailOptions);
+            console.log(`✅ Direct email sent to ${toEmail} from ${senderAddress} (via EmailSettings auth ${authUser})!`);
+
+            return { 
+                success: true, 
+                messageId: info.messageId, 
+                sender: senderAddress, 
+                senderName: senderDisplayName 
+            };
+        }
+
+        // Case C: Fallback to user's personal or system EmailSettings
         const { transporter, creds } = await createTransporter(userId);
 
         const senderAddress = (customSender && customSender.trim()) ? customSender.trim().toLowerCase() : creds.user;
@@ -301,6 +429,15 @@ const sendDirectClientEmail = async (toEmail, subject, htmlBody, userId = null, 
         };
     } catch (error) {
         console.error('❌ Error sending direct client email:', error.message);
+        
+        // Clarify common SMTP errors
+        if (error.code === 'EAUTH' || (error.message && (error.message.includes('BadCredentials') || error.message.includes('535') || error.message.includes('Username and Password not accepted')))) {
+            throw new Error(`Google / SMTP authentication failed for "${attemptedSender}". If using Gmail, ensure 2-Step Verification is ON in your Google Account and generate a 16-character Google App Password (not your standard password). Enter it in Email Settings.`);
+        }
+        if (error.code === 'ETIMEDOUT' || error.code === 'ESOCKET' || (error.message && error.message.includes('timeout'))) {
+            throw new Error(`Connection timed out while reaching SMTP server for "${attemptedSender}". Check your SMTP host and port settings.`);
+        }
+
         throw error;
     }
 };

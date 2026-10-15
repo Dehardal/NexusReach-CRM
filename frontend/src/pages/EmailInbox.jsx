@@ -45,6 +45,7 @@ const EmailInbox = () => {
     const [composeSubject, setComposeSubject] = useState('');
     const [composeBody, setComposeBody] = useState('');
     const [sendingEmail, setSendingEmail] = useState(false);
+    const [composeError, setComposeError] = useState('');
 
     // Reply Box
     const [replyText, setReplyText] = useState('');
@@ -338,8 +339,11 @@ const EmailInbox = () => {
     // Send new compose email
     const handleSendCompose = async (e) => {
         e?.preventDefault();
+        setComposeError('');
         if (!composeTo || !composeSubject || !composeBody) {
-            toast.error('Recipient, Subject, and Body are required.');
+            const msg = 'Recipient, Subject, and Body are required.';
+            setComposeError(msg);
+            toast.error(msg);
             return;
         }
 
@@ -351,20 +355,23 @@ const EmailInbox = () => {
                 text: composeBody,
                 html: `<div style="font-family: sans-serif; line-height: 1.6; color: #1f2937;">${composeBody.replace(/\n/g, '<br/>')}</div>`,
                 from: selectedSender || myMailboxAddress
-            }, { timeout: 20000 });
+            }, { timeout: 25000 });
 
             toast.success('Email sent successfully!');
             setComposeOpen(false);
             setComposeTo('');
             setComposeSubject('');
             setComposeBody('');
+            setComposeError('');
 
-            if (activeTab === 'sent') {
-                setEmails(prev => [data.email, ...prev]);
-                setSelectedEmail(data.email);
-            }
+            // Automatically switch to 'sent' folder so user immediately sees their sent email
+            setActiveTab('sent');
+            setEmails(prev => [data.email, ...prev.filter(m => m._id !== data.email._id)]);
+            setSelectedEmail(data.email);
         } catch (err) {
-            toast.error(err.response?.data?.message || err.message || 'Failed to send email. Check Email Settings.');
+            const errMsg = err.response?.data?.message || err.message || 'Failed to send email. Check Email Settings.';
+            setComposeError(errMsg);
+            toast.error(errMsg);
         } finally {
             setSendingEmail(false);
         }
@@ -525,6 +532,11 @@ const EmailInbox = () => {
                                 }}
                                 options={[
                                     { value: 'all', label: `All Inboxes & Aliases (${availableSenders.length || 1})`, icon: '🌐' },
+                                    ...(myMailboxAddress && !mailboxList.some(m => m.emailUser?.toLowerCase() === myMailboxAddress.toLowerCase()) ? [{
+                                        value: myMailboxAddress,
+                                        label: `${myMailboxAddress} (Primary Outbound)`,
+                                        icon: '✉️'
+                                    }] : []),
                                     ...mailboxList.map((mb) => ({
                                         value: mb.emailUser,
                                         label: `${mb.emailUser} [${mb.provider === 'cloudflare' ? 'Cloudflare Alias' : mb.provider}]`,
@@ -1184,6 +1196,38 @@ const EmailInbox = () => {
 
                         {/* Scrollable Form Body */}
                         <div className="modal-body-scroll">
+                            {/* Inline Error Alert if dispatch fails */}
+                            {composeError && (
+                                <div style={{
+                                    background: 'rgba(239, 68, 68, 0.12)',
+                                    border: '1px solid rgba(239, 68, 68, 0.35)',
+                                    borderRadius: '10px',
+                                    padding: '12px 14px',
+                                    display: 'flex',
+                                    alignItems: 'flex-start',
+                                    gap: '10px',
+                                    color: '#f87171',
+                                    fontSize: '13px',
+                                    lineHeight: 1.5,
+                                    marginBottom: '14px'
+                                }}>
+                                    <AlertOctagon size={18} style={{ flexShrink: 0, marginTop: '2px' }} />
+                                    <div style={{ flex: 1 }}>
+                                        <strong style={{ display: 'block', fontWeight: 600, marginBottom: '2px', color: '#fca5a5' }}>
+                                            Dispatch Error
+                                        </strong>
+                                        <span>{composeError}</span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setComposeError('')}
+                                        style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', padding: 0 }}
+                                    >
+                                        <X size={15} />
+                                    </button>
+                                </div>
+                            )}
+
                             {/* Sender Selector */}
                             <div>
                                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>

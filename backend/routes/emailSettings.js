@@ -69,6 +69,11 @@ router.post('/', protect, async (req, res) => {
             return res.status(400).json({ message: 'Password or API Key is required' });
         }
 
+        // Sanitize App Password by removing any spaces
+        if (provider === 'gmail' || cleanEmailUser.includes('gmail.com')) {
+            passToVerify = passToVerify.replace(/\s+/g, '');
+        }
+
         // Test credentials with Nodemailer verify()
         let transporter;
         if (provider === 'gmail') {

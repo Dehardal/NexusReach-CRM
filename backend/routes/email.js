@@ -287,30 +287,45 @@ router.get('/inbox', protect, async (req, res) => {
 router.get('/sent', protect, async (req, res) => {
     try {
         const { search, filterUser, filterMailbox } = req.query;
-        let query = { 
-            direction: 'outbound',
-            isTrash: { $ne: true }
-        };
+        let conditions = [
+            {
+                $or: [
+                    { direction: 'outbound' },
+                    { folder: 'sent' }
+                ]
+            },
+            { isTrash: { $ne: true } }
+        ];
 
         const isAdmin = ['master', 'admin', 'manager'].includes(req.user.role);
 
         if (!isAdmin) {
-            query.userId = req.user._id;
+            conditions.push({ userId: req.user._id });
         } else if (filterUser && filterUser !== 'all') {
-            query.userId = filterUser;
+            conditions.push({ userId: filterUser });
         }
 
         if (filterMailbox && filterMailbox !== 'all') {
-            query.from = { $regex: filterMailbox, $options: 'i' };
+            conditions.push({
+                $or: [
+                    { from: { $regex: filterMailbox, $options: 'i' } },
+                    { to: { $regex: filterMailbox, $options: 'i' } }
+                ]
+            });
         }
 
         if (search) {
-            query.$or = [
-                { subject: { $regex: search, $options: 'i' } },
-                { to: { $regex: search, $options: 'i' } },
-                { text: { $regex: search, $options: 'i' } }
-            ];
+            conditions.push({
+                $or: [
+                    { subject: { $regex: search, $options: 'i' } },
+                    { to: { $regex: search, $options: 'i' } },
+                    { from: { $regex: search, $options: 'i' } },
+                    { text: { $regex: search, $options: 'i' } }
+                ]
+            });
         }
+
+        const query = conditions.length > 1 ? { $and: conditions } : conditions[0];
 
         const emails = await Email.find(query)
             .sort({ createdAt: -1 })
