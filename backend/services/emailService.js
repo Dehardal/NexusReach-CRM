@@ -2,6 +2,7 @@ const nodemailer = require('nodemailer');
 const EmailSettings = require('../models/EmailSettings');
 const Mailbox = require('../models/Mailbox');
 const { decrypt } = require('../utils/crypto');
+const axios = require('axios');
 
 // Helper to resolve active credentials for a specific user, or fallback
 const getActiveEmailCredentials = async (userId = null) => {
@@ -230,6 +231,31 @@ const sendFollowUpNotification = async (leadData, followUpData, salesPersonName,
 
 // Helper to dispatch email via SMTP with automatic dual-port fallback (587 STARTTLS <-> 465 SSL)
 const dispatchWithPortFallback = async ({ host, port, authUser, pass, isGmail, mailOptions }) => {
+    // If using Resend API Key, dispatch over HTTPS REST API (Port 443) which is never blocked by cloud firewalls
+    if ((pass && pass.startsWith('re_')) || (host && host.includes('resend.com'))) {
+        try {
+            console.log(`🚀 Dispatching email via Resend HTTPS REST API (Port 443)...`);
+            const res = await axios.post('https://api.resend.com/emails', {
+                from: mailOptions.from,
+                to: [mailOptions.to],
+                reply_to: mailOptions.replyTo || undefined,
+                subject: mailOptions.subject,
+                html: mailOptions.html,
+                text: mailOptions.text
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${pass}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 12000
+            });
+            console.log(`✅ Resend HTTPS API success:`, res.data);
+            return { messageId: res.data?.id };
+        } catch (resendApiErr) {
+            console.warn('[RESEND HTTPS API WARNING]', resendApiErr.response?.data || resendApiErr.message);
+        }
+    }
+
     const primaryPort = isGmail ? (port ? Number(port) : 587) : (Number(port) || 587);
     const primarySecure = primaryPort === 465;
 
@@ -451,7 +477,7 @@ const sendDirectClientEmail = async (toEmail, subject, htmlBody, userId = null, 
             throw new Error(`Google / SMTP authentication failed for "${attemptedSender}". If using Gmail, ensure 2-Step Verification is ON in your Google Account and generate a 16-character Google App Password (not your standard password). Enter it in Email Settings.`);
         }
         if (error.code === 'ETIMEDOUT' || error.code === 'ESOCKET' || (error.message && error.message.includes('timeout'))) {
-            throw new Error(`Connection timed out while reaching SMTP server for "${attemptedSender}". Check your SMTP host and port settings.`);
+            throw new Error(`Connection timed out reaching SMTP server for "${attemptedSender}". Note: Cloud platforms like Render Free Tier block outbound SMTP ports (465 & 587). To send from Render, use an HTTPS email provider (like Resend or Brevo), run locally, or upgrade Render to open SMTP ports.`);
         }
 
         throw error;

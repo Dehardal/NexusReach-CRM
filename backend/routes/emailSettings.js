@@ -74,56 +74,63 @@ router.post('/', protect, async (req, res) => {
             passToVerify = passToVerify.replace(/\s+/g, '');
         }
 
-        // Test credentials with Nodemailer verify()
-        let transporter;
-        if (provider === 'gmail' || cleanEmailUser.includes('gmail.com')) {
-            const port = Number(smtpPort) || 587;
-            transporter = nodemailer.createTransport({
-                host: 'smtp.gmail.com',
-                port: port,
-                secure: port === 465,
-                auth: { user: effectiveSmtpUser, pass: passToVerify },
-                tls: { rejectUnauthorized: false },
-                connectionTimeout: 10000,
-                greetingTimeout: 10000
-            });
-        } else if (provider === 'resend') {
-            transporter = nodemailer.createTransport({
-                host: 'smtp.resend.com',
-                port: 465,
-                secure: true,
-                auth: { user: 'resend', pass: passToVerify }
-            });
-        } else if (provider === 'brevo') {
-            transporter = nodemailer.createTransport({
-                host: 'smtp-relay.brevo.com',
-                port: 587,
-                secure: false,
-                auth: { user: effectiveSmtpUser, pass: passToVerify }
-            });
-        } else if (provider === 'outlook') {
-            transporter = nodemailer.createTransport({
-                host: 'smtp.office365.com',
-                port: 587,
-                secure: false,
-                auth: { user: effectiveSmtpUser, pass: passToVerify }
-            });
+        if (provider === 'resend' || passToVerify.startsWith('re_')) {
+            const axios = require('axios');
+            try {
+                await axios.get('https://api.resend.com/api-keys', {
+                    headers: { 'Authorization': `Bearer ${passToVerify}` },
+                    timeout: 8000
+                });
+            } catch (resendErr) {
+                if (resendErr.response?.status === 401) {
+                    return res.status(400).json({ message: 'Invalid Resend API Key. Please verify your API Key from resend.com/api-keys.' });
+                }
+            }
         } else {
-            transporter = nodemailer.createTransport({
-                host: smtpHost || 'smtp.resend.com',
-                port: Number(smtpPort) || 587,
-                secure: Number(smtpPort) === 465,
-                auth: { user: effectiveSmtpUser, pass: passToVerify }
-            });
-        }
+            // Test credentials with Nodemailer verify()
+            let transporter;
+            if (provider === 'gmail' || cleanEmailUser.includes('gmail.com')) {
+                const port = Number(smtpPort) || 587;
+                transporter = nodemailer.createTransport({
+                    host: 'smtp.gmail.com',
+                    port: port,
+                    secure: port === 465,
+                    auth: { user: effectiveSmtpUser, pass: passToVerify },
+                    tls: { rejectUnauthorized: false },
+                    connectionTimeout: 10000,
+                    greetingTimeout: 10000
+                });
+            } else if (provider === 'brevo') {
+                transporter = nodemailer.createTransport({
+                    host: 'smtp-relay.brevo.com',
+                    port: 587,
+                    secure: false,
+                    auth: { user: effectiveSmtpUser, pass: passToVerify }
+                });
+            } else if (provider === 'outlook') {
+                transporter = nodemailer.createTransport({
+                    host: 'smtp.office365.com',
+                    port: 587,
+                    secure: false,
+                    auth: { user: effectiveSmtpUser, pass: passToVerify }
+                });
+            } else {
+                transporter = nodemailer.createTransport({
+                    host: smtpHost || 'smtp.resend.com',
+                    port: Number(smtpPort) || 587,
+                    secure: Number(smtpPort) === 465,
+                    auth: { user: effectiveSmtpUser, pass: passToVerify }
+                });
+            }
 
-        try {
-            await transporter.verify();
-        } catch (verifyErr) {
-            console.error('[EMAIL SETTINGS VERIFY ERROR]', verifyErr);
-            return res.status(400).json({
-                message: `Failed to authenticate with ${provider.toUpperCase()}: ${verifyErr.message}. Verify host, port, and key.`
-            });
+            try {
+                await transporter.verify();
+            } catch (verifyErr) {
+                console.error('[EMAIL SETTINGS VERIFY ERROR]', verifyErr);
+                return res.status(400).json({
+                    message: `Failed to authenticate with ${provider.toUpperCase()}: ${verifyErr.message}. Note: On cloud platforms like Render Free Tier, SMTP ports 25, 465, and 587 are blocked. Use Resend (HTTPS API) or upgrade instance to enable SMTP.`
+                });
+            }
         }
 
         // Encrypt the password before storing in MongoDB
