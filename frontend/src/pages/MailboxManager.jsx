@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Mail, CheckCircle2, AlertCircle, RefreshCw, Trash2, Power, ShieldCheck, Zap, Server, X, Users, UserCheck, Inbox, CheckSquare, Square, PauseCircle, PlayCircle, Scale, Settings, Search, Globe, Sparkles } from 'lucide-react';
+import { Mail, CheckCircle2, AlertCircle, RefreshCw, Trash2, Power, ShieldCheck, Zap, Server, X, Users, UserCheck, Inbox, CheckSquare, Square, Filter, PauseCircle, PlayCircle, Scale, Settings, Search, Globe, Sparkles } from 'lucide-react';
 import CustomDropdown from '../components/CustomDropdown';
 
 const MailboxManager = () => {
